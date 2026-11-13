@@ -118,13 +118,41 @@ check "une commande ordinaire fonctionne sans ~/.claude" grep -q "Index state" <
 check "une commande Claude Code signale le dossier manquant" grep -q "Folder not found" <<< "$(run conv-list)"
 end_home
 
-echo "8. Langues"
+echo "8. Mode api (piloté par l'app, sans question)"
+new_home
+fake_app "CoreEraserTest" "com.test.coreeraser.app"
+touch "$T/Library/Preferences/com.test.coreeraser.app.plist" "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
+api() { run api "$@" </dev/null; }
+out=$(api list orphans)
+check "list orphans : 4 colonnes, reste détecté" bash -c "awk -F'\t' '/com.test.coreeraser.leftover.plist/ && NF == 4 { f = 1 } END { exit !f }' <<< \"\$1\"" _ "$out"
+check "list apps : la fausse app est listée, fermée" grep -q "^0	$T/Applications/CoreEraserTest.app$" <<< "$(api list apps)"
+check "list app-files : réglages de l'app" grep -q "com.test.coreeraser.app.plist$" <<< "$(api list app-files "$T/Applications/CoreEraserTest.app")"
+check "list user-clean : 3 lignes" test "$(api list user-clean | wc -l | tr -d ' ')" = 3
+check "list system-clean : 3 lignes avec commande sudo" test "$(api list system-clean | grep -c '	sudo find ')" = 3
+api exclude-add "$T/Library/Preferences/com.test.coreeraser.leftover.plist" >/dev/null
+check "exclude-add puis list excludes" grep -q "com.test.coreeraser.leftover.plist" <<< "$(api list excludes)"
+api trash "$T/Library/Preferences/com.test.coreeraser.leftover.plist" >/dev/null; rc=$?
+check "trash d'un élément protégé : refusé (code non nul, fichier intact)" test "$rc" -ne 0 -a -e "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
+api exclude-remove "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
+run --dry-run api trash "$T/Library/Preferences/com.test.coreeraser.leftover.plist" >/dev/null </dev/null
+check "simulation : rien n'est déplacé" test -e "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
+api trash "$T/Library/Preferences/com.test.coreeraser.leftover.plist" >/dev/null
+check "exclude-remove puis trash : à la Corbeille" test -e "$T/.Trash/com.test.coreeraser.leftover.plist"
+api list inconnu >/dev/null; rc=$?
+check "demande inconnue : code 2" test "$rc" -eq 2
+check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"
+end_home
+
+echo "9. Langues"
 new_home
 check "anglais par défaut" grep -q "^core-eraser: command-line" <<< "$(HOME="$T" "$SCRIPT" -h 2>&1)"
 run lang fr >/dev/null
 check "« lang fr » est mémorisé" grep -qx fr "$T/Library/Application Support/io.github.benjaminbusselet.core-eraser/lang"
 check "l'aide passe en français" grep -q "^core-eraser : entretien" <<< "$(HOME="$T" "$SCRIPT" -h 2>&1)"
-out=$(printf '1\noui\n' | LANG_TEST=en run --dry-run user-clean)
+# orphans plutôt que user-clean : ce dernier pose une question de plus quand un navigateur est ouvert
+touch "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
+n=$(echo "" | LANG_TEST=en run orphans | awk '/com.test.coreeraser.leftover.plist/ { print $1 }')
+out=$(printf '%s\noui\n' "$n" | LANG_TEST=en run --dry-run orphans)
 check "« oui » est accepté en anglais" grep -q "simulation" <<< "$out"
 end_home
 

@@ -47,6 +47,8 @@ CACHE_SUBDIRS="cache debug backups"
 ASSUME_YES=0
 count=0
 DRY_RUN=0
+# 1 quand le script est piloté par l'app (mode « api ») : aucune question n'est posée
+API=0
 # Chemin réel du script (pour le service de surveillance et le bouton « Ouvrir dans Terminal »)
 SELF="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 
@@ -235,6 +237,12 @@ exclude_add() {
     msg "Protégé : %s" "$p"
 }
 
+# Réécrit la liste sans la ligne donnée (commentaires conservés)
+exclude_remove_line() {
+    awk -v l="$1" '$0 != l' "$EXCLUDE_FILE" > "$EXCLUDE_FILE.tmp" && mv "$EXCLUDE_FILE.tmp" "$EXCLUDE_FILE"
+    EXCLUDES_LOADED=""
+}
+
 exclude_run() {
     local n=0 line
     exclude_init
@@ -266,7 +274,7 @@ exclude_run() {
             one_number "$line" "$n"
             line=$(grep -vE '^[[:space:]]*(#|$)' "$EXCLUDE_FILE" | sed -n "${NUM}p")
             # Réécrit la liste sans cette ligne (commentaires conservés)
-            awk -v l="$line" '$0 != l' "$EXCLUDE_FILE" > "$EXCLUDE_FILE.tmp" && mv "$EXCLUDE_FILE.tmp" "$EXCLUDE_FILE"
+            exclude_remove_line "$line"
             count=$((count + 1))
             msg "Retiré : %s" "$line" ;;
         *) usage ;;
@@ -750,6 +758,7 @@ offer_quit() {
         app_is_running "$app" && open+=("$app")
     done
     [ ${#open[@]} -gt 0 ] || return 0
+    [ "$API" -eq 1 ] && return 1
     msg "Apps ouvertes :"
     for app in "${open[@]}"; do
         echo "  - $(basename "$app" .app)"
@@ -1486,12 +1495,19 @@ system_clean_cmds() {
              "find /private/var/log -type f \\( $expr \\) -delete")
 }
 
+# Taille en Ko des 3 éléments de system-clean, une par ligne
+system_clean_kb() {
+    du -sk /Library/Caches 2>/dev/null | cut -f1
+    du -sk /Library/Logs 2>/dev/null | cut -f1
+    rotated_logs | sum_kb
+}
+
 system_clean_run() {
     local sizes=() n sel num
     system_clean_cmds
-    sizes=("$(fmt_kb "$(du -sk /Library/Caches 2>/dev/null | cut -f1)")"
-           "$(fmt_kb "$(du -sk /Library/Logs 2>/dev/null | cut -f1)")"
-           "$(fmt_kb "$(rotated_logs | sum_kb)")")
+    while IFS= read -r n; do
+        sizes+=("$(fmt_kb "$n")")
+    done < <(system_clean_kb)
     hdr "%3s  %9s  %s\n" "N°" "Taille" "Contenu"
     for n in 0 1 2; do
         printf "%3d  %9s  %s\n" $((n + 1)) "${sizes[$n]}" "${SC_LABELS[$n]}"
@@ -2033,6 +2049,94 @@ maintenance_run() {
     fi
 }
 
+# --- mode api : piloté par l'app, sans aucune question ----------------------
+# Sorties en colonnes séparées par des tabulations. Code de retour 2 : demande inconnue.
+#   api list orphans|plugins|services|pkgs|apps|dev-caches|user-clean|system-clean|excludes|tm-backups
+#   api list app-files <app>
+#   api text tm-status|network-diag
+#   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>
+#   api user-clean <0|1|2>...        api dev-clean <nom>...       api version
+
+api_list() {
+    local d app p kb i name path
+    case "${1:-}" in
+        orphans) orphans_scan | sort -rn ;;
+        plugins) load_apps; plugins_scan | sort -rn ;;
+        services) load_apps; services_scan ;;
+        pkgs) pkg_scan ;;
+        apps)
+            for d in /Applications "$HOME/Applications"; do
+                for app in "$d"/*.app; do
+                    [ -d "$app" ] && [ ! -L "$app" ] || continue
+                    if app_is_running "$app"; then i=1; else i=0; fi
+                    printf '%s\t%s\n' "$i" "$app"
+                done
+            done ;;
+        app-files)
+            [ -d "${2:-}" ] || return 2
+            app_related_files "$2" | while IFS= read -r p; do
+                printf '%s\t%s\n' "$(du -sk "$p" 2>/dev/null | cut -f1)" "$p"
+            done ;;
+        dev-caches)
+            dev_caches | while IFS=$'\t' read -r name path; do
+                [ -n "$path" ] && [ -d "$path" ] || continue
+                printf '%s\t%s\t%s\n' "$(du -sk "$path" 2>/dev/null | cut -f1)" "$name" "$path"
+            done ;;
+        user-clean)
+            user_clean_build
+            for i in 0 1 2; do
+                printf '%s\t%s\t%s\n' "$i" "$(printf '%s\n' "${UC_LISTS[$i]}" | sum_kb)" "${UC_LABELS[$i]}"
+            done ;;
+        system-clean)
+            system_clean_cmds
+            i=0
+            while IFS= read -r kb; do
+                printf '%s\t%s\t%s\tsudo %s\n' "$i" "${kb:-0}" "${SC_LABELS[$i]}" "${SC_CMDS[$i]}"
+                i=$((i + 1))
+            done < <(system_clean_kb) ;;
+        excludes) exclude_entries ;;
+        tm-backups) tm_backups "$(tm_dest)" ;;
+        *) return 2 ;;
+    esac
+}
+
+api_run() {
+    local what="${1:-}" p rc=0 name path
+    [ $# -gt 0 ] && shift
+    case "$what" in
+        list) api_list "$@" ;;
+        text)
+            case "${1:-}" in
+                tm-status) tm_status ;;
+                network-diag) network_diag ;;
+                *) return 2 ;;
+            esac ;;
+        trash)
+            for p in "$@"; do
+                trash_item "$p" || rc=1
+            done
+            return "$rc" ;;
+        exclude-add) exclude_add "${1:-}" ;;
+        exclude-remove)
+            [ -n "${1:-}" ] && [ -f "$EXCLUDE_FILE" ] || return 1
+            exclude_remove_line "${1/#$HOME/~}" ;;
+        user-clean)
+            user_clean_build
+            for p in "$@"; do
+                case "$p" in 0|1|2) user_clean_apply "$p" ;; *) rc=2 ;; esac
+            done
+            return "$rc" ;;
+        dev-clean)
+            for p in "$@"; do
+                path=$(dev_caches | awk -F'\t' -v n="$p" '$1 == n { print $2 }')
+                if [ -n "$path" ] && [ -d "$path" ]; then dev_clean_item "$p" "$path"; else rc=2; fi
+            done
+            return "$rc" ;;
+        version) printf '%s\n' "$VERSION" ;;
+        *) return 2 ;;
+    esac
+}
+
 # --- menu -----------------------------------------------------------------
 
 # Catégories du menu principal ; chaque sous-menu liste "commande|libellé"
@@ -2497,6 +2601,14 @@ fi
 if [ "${1:-}" = "--dry-run" ]; then
     DRY_RUN=1
     shift
+fi
+
+if [ "${1:-}" = "api" ]; then
+    API=1
+    ASSUME_YES=1
+    shift
+    api_run "$@"
+    exit $?
 fi
 
 if [ $# -eq 0 ]; then
