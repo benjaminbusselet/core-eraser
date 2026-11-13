@@ -1,0 +1,83 @@
+# core-eraser
+
+**A leftover and cache eraser for macOS, in a single shell script.**
+A lightweight, readable alternative to the cleaning parts of apps like Pearcleaner and OnyX.
+
+[Version française](README.fr.md)
+
+> Status: **0.1.0**, early release. Tested on macOS 27.2.1 (Apple Silicon). Use `--dry-run` first.
+
+## What it does
+
+| Category | Commands |
+|---|---|
+| Maintenance | `maintenance`: checkboxes (caches, logs, DNS, Spotlight, Time Machine), run all at once |
+| Applications | `app-uninstall`, `orphans` (leftovers of deleted apps), `updates`, `brew-manage`, `plugins`, `services`, `pkg-manage`, `lipo-app` |
+| Cleanup | `user-clean`, `dev-clean`, `system-clean` |
+| Storage and backup | `timemachine` (status, exclusions, size of each backup, differences), `spotlight` |
+| Network | `network` (diagnostics, DNS test, speed test) |
+| Claude Code | `conv-list`, `conv --all`, `claude-cache`, `all` |
+| Privacy | `zsh-history` |
+| Settings | `exclude`, `sentinel on/off`, `lang en/fr` |
+
+Run `./core-eraser.sh -h` for the full list.
+
+## Safety first
+
+- **Trash, not delete**: files go to the Trash, so you can put them back. Only caches and logs, which apps recreate, are deleted directly.
+- **Nothing without your choice**: every action lists what it will touch and asks for confirmation.
+- **Never runs `sudo` itself**: actions that need administrator rights print the exact command for you to run, with paths safely quoted.
+- **Protected items**: `./core-eraser.sh exclude add <path>` keeps a file or folder away from every command.
+- **Dry run**: `./core-eraser.sh --dry-run <command>` shows what would happen and changes nothing.
+- **Open apps**: when an app involved is open, core-eraser offers to quit it (like Cmd+Q).
+- **Leftover detection** is based on what is really installed (bundle identifiers, extensions, shared groups declared in app signatures), not on fixed lists.
+
+## Requirements
+
+- macOS with the built-in `bash` 3.2. Nothing to install.
+- Optional: [Homebrew](https://brew.sh) (`brew-manage`, `updates`, `dev-clean`), `jq` (`conv-list`).
+- Some folders (`~/Library/Containers`, the Trash) may require **Full Disk Access** for Terminal: System Settings > Privacy & Security > Full Disk Access.
+
+## Install
+
+```sh
+git clone https://github.com/benjaminbusselet/core-eraser.git
+cd core-eraser
+./core-eraser.sh            # keyboard menu
+```
+
+Optional shortcut in `~/.zshrc`: `alias eraser='/path/to/core-eraser/core-eraser.sh'`
+
+## Usage
+
+```sh
+./core-eraser.sh                      # menu: arrows, Enter, q to go back
+./core-eraser.sh orphans              # leftovers of deleted apps
+./core-eraser.sh --dry-run user-clean # simulation
+./core-eraser.sh lang fr              # French interface (English by default)
+```
+
+## Known limitations
+
+- Commands needing `sudo` are printed, not run, so they are not tested automatically.
+- `sentinel` (Trash monitoring) needs Full Disk Access to read the Trash; it will work fully with the upcoming app.
+- `updates` compares versions only for Homebrew, Sparkle and App Store apps; beta versions may be reported as outdated.
+- `lipo-app` replaces the app signature with a local one: automatic updates and permissions may be affected (a warning is shown).
+- The Claude Code commands read the internal layout of `~/.claude`, checked with Claude Code 2.1.323. Another version may change it (a warning is shown).
+- Table columns may shift slightly with accented characters.
+
+## Tests
+
+```sh
+tests/run-tests.sh
+```
+
+Every test runs in a temporary home folder with fake apps and files: your Mac is never touched. The same tests run on GitHub (macOS runner) on every push.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+## License
+
+[MIT](LICENSE). Mac and macOS are trademarks of Apple Inc., registered in the U.S. and other countries and regions. This project is not affiliated with Apple, Pearcleaner or OnyX.

@@ -1,0 +1,133 @@
+#!/bin/bash
+# Tests de core-eraser. Chaque test tourne dans un dossier perso temporaire, avec de faux fichiers :
+# rien n'est touché sur le vrai Mac. Usage : tests/run-tests.sh
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+SCRIPT="$ROOT/core-eraser.sh"
+pass=0
+fail=0
+
+ok()  { pass=$((pass + 1)); printf '  ok    %s\n' "$1"; }
+ko()  { fail=$((fail + 1)); printf '  ÉCHEC %s\n' "$1"; }
+check() {   # check "description" commande...
+    local d="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then ok "$d"; else ko "$d"; fi
+}
+
+# Dossier perso temporaire, détruit en fin de test
+new_home() {
+    T=$(mktemp -d)
+    mkdir -p "$T/.claude" "$T/.Trash" "$T/Library/Preferences" "$T/Applications"
+}
+end_home() { rm -rf "$T"; }
+
+# Lance le script dans le dossier perso temporaire, en anglais
+run() { HOME="$T" CLAUDE_CONFIG_DIR="$T/.claude" TMPDIR_CLAUDE="$T/tmpc" TOOLS_LANG="${LANG_TEST:-en}" "$SCRIPT" "$@" 2>&1; }
+
+# Charge les fonctions du script sans le lancer
+lib() { HOME="$T" TOOLS_LANG=en CORE_ERASER_LIB=1 bash -c "source \"$SCRIPT\"; $1"; }
+
+# Fausse app : $1 nom, $2 identifiant
+fake_app() {
+    mkdir -p "$T/Applications/$1.app/Contents"
+    plutil -create xml1 "$T/Applications/$1.app/Contents/Info.plist"
+    plutil -insert CFBundleIdentifier -string "$2" "$T/Applications/$1.app/Contents/Info.plist"
+}
+
+echo "1. Syntaxe et qualité"
+check "syntaxe du script" bash -n "$SCRIPT"
+check "syntaxe des tests" bash -n "$0"
+if command -v shellcheck >/dev/null; then
+    check "shellcheck sans remarque" shellcheck -s bash "$SCRIPT" "$0"
+else
+    echo "  (shellcheck absent : vérification sautée)"
+fi
+
+echo "2. Traductions"
+cat_ok=$(perl -ne 'if (/^i18n_catalog\(\) \{/ .. /^\}/) { if (/^([^\t]*)\t(.*)$/) { my ($k, $v) = ($1, $2); my $a = () = $k =~ /%s/g; my $b = () = $v =~ /%s/g; print "écart : $k\n" if $a != $b; } }' "$SCRIPT")
+check "même nombre de %s dans chaque traduction" test -z "$cat_ok"
+missing=$(perl -e '
+    local $/; my $s = <>;
+    my %cat; if ($s =~ /^i18n_catalog\(\) \{\n(.*?)^\}/ms) { for (split /\n/, $1) { $cat{$1} = 1 if /^([^\t]*)\t/ } }
+    while ($s =~ /(?<![\w-])(?:msg|ask) "((?:[^"\\]|\\.)*)"/g) {
+        my $k = $1; next if $k =~ /\$/; $k =~ s/\\(["\$`\\])/$1/g;
+        next if $k !~ /[A-Za-zÀ-ÿ]{3,}/ || $k =~ /^\s*sudo / || $k =~ /^\[simulation\] brew/;
+        next if $k =~ /^\s*-\s+[~\w.\/*]+$/;     # simple nom de fichier : identique dans les deux langues
+        print "sans traduction : $k\n" unless $cat{$k};
+    }' "$SCRIPT")
+check "chaque message a une traduction anglaise" test -z "$missing"
+[ -z "$missing" ] || printf '%s\n' "$missing" | sed 's/^/        /'
+
+echo "3. Sécurité"
+new_home
+marker="$T/PIEGE"
+cmd=$(lib "echo \"sudo mv \$(shq '/x\$(touch $marker)\"y') /dest\"")
+bash -c "${cmd/sudo mv/:}"
+check "un chemin piégé dans une commande sudo affichée ne s'exécute pas" test ! -e "$marker"
+check "Corbeille refusée hors du dossier perso" bash -c "! (HOME='$T' TOOLS_LANG=en CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; trash_item /etc/hosts')"
+touch "$T/Library/Preferences/com.test.keep.plist"
+run exclude add "$T/Library/Preferences/com.test.keep.plist" >/dev/null
+lib "DRY_RUN=0; trash_item \"\$HOME/Library/Preferences/com.test.keep.plist\"" >/dev/null
+check "élément protégé jamais mis à la Corbeille" test -e "$T/Library/Preferences/com.test.keep.plist"
+touch "$T/a.txt"; lib "DRY_RUN=0; trash_item \"\$HOME/a.txt\"" >/dev/null
+touch "$T/a.txt"; lib "DRY_RUN=0; trash_item \"\$HOME/a.txt\"" >/dev/null
+check "deux éléments du même nom : aucun écrasement dans la Corbeille" test -e "$T/.Trash/a.txt.1"
+end_home
+
+echo "4. Saisie"
+new_home
+out=$(printf '99\n' | run spotlight)
+check "numéro hors limites refusé" grep -q "Invalid number: 99" <<< "$out"
+out=$(printf '1 2\n' | run spotlight)
+check "deux numéros refusés là où un seul est attendu" grep -q "One number only" <<< "$out"
+end_home
+
+echo "5. Restes d'apps (orphans)"
+new_home
+touch "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
+out=$(echo "" | run orphans)
+check "un faux reste est détecté" grep -q "com.test.coreeraser.leftover.plist" <<< "$out"
+n=$(awk '/com.test.coreeraser.leftover.plist/ { print $1 }' <<< "$out")
+printf '%s\nyes\n' "$n" | run --dry-run orphans >/dev/null
+check "simulation : rien n'est déplacé" test -e "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
+printf 'x %s\n' "$n" | run orphans >/dev/null
+out=$(echo "" | run orphans)
+check "après « x N », le reste est protégé et n'est plus signalé" bash -c "! grep -q com.test.coreeraser.leftover.plist <<< \"\$1\"" _ "$out"
+end_home
+
+echo "6. Désinstallation d'une fausse app (app-uninstall)"
+new_home
+fake_app "CoreEraserTest" "com.test.coreeraser.app"
+mkdir -p "$T/Library/Caches/com.test.coreeraser.app"
+touch "$T/Library/Preferences/com.test.coreeraser.app.plist" "$T/Library/Preferences/com.test.other.plist"
+n=$(echo "" | run app-uninstall | awk '$2 == "CoreEraserTest" { print $1 }')
+printf '%s\nyes\n' "$n" | run app-uninstall >/dev/null
+check "l'app est à la Corbeille" test -e "$T/.Trash/CoreEraserTest.app"
+check "ses réglages sont à la Corbeille" test -e "$T/.Trash/com.test.coreeraser.app.plist"
+check "son cache est à la Corbeille" test -e "$T/.Trash/com.test.coreeraser.app"
+check "le fichier d'une autre app reste en place" test -e "$T/Library/Preferences/com.test.other.plist"
+end_home
+
+echo "7. Mac sans Claude Code"
+new_home
+rmdir "$T/.claude"
+check "--version affiche la version" grep -q "^core-eraser [0-9]*\.[0-9]*\.[0-9]*$" <<< "$(run --version)"
+check "une commande ordinaire fonctionne sans ~/.claude" grep -q "Index state" <<< "$(echo "" | run spotlight)"
+check "une commande Claude Code signale le dossier manquant" grep -q "Folder not found" <<< "$(run conv-list)"
+end_home
+
+echo "8. Langues"
+new_home
+check "anglais par défaut" grep -q "^core-eraser: command-line" <<< "$(HOME="$T" "$SCRIPT" -h 2>&1)"
+run lang fr >/dev/null
+check "« lang fr » est mémorisé" grep -qx fr "$T/Library/Application Support/io.github.benjaminbusselet.core-eraser/lang"
+check "l'aide passe en français" grep -q "^core-eraser : entretien" <<< "$(HOME="$T" "$SCRIPT" -h 2>&1)"
+out=$(printf '1\noui\n' | LANG_TEST=en run --dry-run user-clean)
+check "« oui » est accepté en anglais" grep -q "simulation" <<< "$out"
+end_home
+
+echo
+echo "Résultat : $pass réussi(s), $fail échec(s)"
+[ "$fail" -eq 0 ]
