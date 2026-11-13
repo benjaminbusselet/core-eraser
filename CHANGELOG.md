@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - `api` mode: tab-separated lists and direct actions without prompts, for the upcoming app.
+- App (work in progress): SwiftUI window with Maintenance and Leftovers screens, built by `build-app.sh` (requires Xcode).
+
+### Changed
+
+- Faster search of app-related files and caches (one pass instead of one process per file).
+
+### Fixed
+
+- core-eraser's own files are never reported as leftovers.
+- Accented text is handled when no system language is set (app, background service).
 
 ## [0.1.0] - 2026-11-13
 

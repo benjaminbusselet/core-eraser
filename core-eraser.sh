@@ -39,6 +39,10 @@
 set -u
 
 VERSION="0.1.0"
+APP_ID="io.github.benjaminbusselet.core-eraser"
+
+# Sans langue système définie (app, service en arrière-plan), les textes accentués seraient mal comparés
+[ -n "${LC_ALL:-}${LC_CTYPE:-}${LANG:-}" ] || export LC_CTYPE=UTF-8
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 TMP_DIR="${TMPDIR_CLAUDE:-/private/tmp/claude-$(id -u)}"
@@ -126,7 +130,7 @@ human_size() {
 
 # --- liste d'exclusions ------------------------------------------------------
 
-TOOLS_DATA="$HOME/Library/Application Support/io.github.benjaminbusselet.core-eraser"
+TOOLS_DATA="$HOME/Library/Application Support/$APP_ID"
 EXCLUDE_FILE="$TOOLS_DATA/exclusions.txt"
 
 # --- langue -------------------------------------------------------------------
@@ -211,6 +215,8 @@ exclude_entries() {
 is_excluded() {
     local path="$1" pat
     case "$path" in "$TOOLS_DATA"|"$TOOLS_DATA"/*) return 0 ;; esac
+    # Fichiers de core-eraser lui-même (réglages de l'app, service de surveillance...)
+    case "${path##*/}" in "$APP_ID"|"$APP_ID".*) return 0 ;; esac
     [ -n "${EXCLUDES_LOADED:-}" ] || { EXCLUDES=$(exclude_entries); EXCLUDES_LOADED=1; }
     while IFS= read -r pat; do
         [ -n "$pat" ] || continue
@@ -660,7 +666,7 @@ is_macos_item() {
 
 # Affiche une ligne par reste : taille en Ko, dossier, nom, chemin (séparés par une tabulation)
 orphans_scan() {
-    local dir entry base key kb label
+    local dir entry base key kb label check
     load_apps
     SYSTEM_INDEX=$(system_index)
     for dir in "${LIB_DIRS[@]}"; do
@@ -671,16 +677,22 @@ orphans_scan() {
             key=$(entry_key "$base")
             case "$key" in ""|.*|com.apple.*) continue ;; esac
             label="$base"
+            check=0
             # Identifiant (a.b.c) : vérifié partout. Simple nom de dossier : seulement dans Application Support.
             case "$key" in
                 *.*.*) ;;
                 *) [ "$dir" = "Application Support" ] && [ -d "$entry" ] || continue
                    is_macos_item "$key" "$entry" && continue
-                   label="$base $(t "(à vérifier)")" ;;
+                   check=1
+                   [ "$API" -eq 1 ] || label="$base $(t "(à vérifier)")" ;;
             esac
             app_is_installed "$key" && continue
             kb=$(du -sk "$entry" 2>/dev/null | cut -f1)
-            printf '%s\t%s\t%s\t%s\n' "${kb:-0}" "$dir" "$label" "$entry"
+            if [ "$API" -eq 1 ]; then
+                printf '%s\t%s\t%s\t%s\t%s\n' "${kb:-0}" "$dir" "$label" "$entry" "$check"
+            else
+                printf '%s\t%s\t%s\t%s\n' "${kb:-0}" "$dir" "$label" "$entry"
+            fi
         done < <(find "$HOME/Library/$dir" -mindepth 1 -maxdepth 1 -print0)
     done
 }
@@ -732,16 +744,38 @@ cask_token() {
         | head -1 | sed -E "s|^$CASKROOM/([^/]+)/.*|\1|"
 }
 
+# Version awk de entry_key et key_matches, pour traiter des centaines de chemins en un seul passage.
+# Les clés à reconnaître sont lues dans la variable d'environnement KEYS (une par ligne).
+# shellcheck disable=SC2016  # programme awk : rien ne doit être interprété par le shell
+AWK_KEYS='
+BEGIN { nk = split(ENVIRON["KEYS"], K, "\n") }
+function ekey(path,    k) {
+    k = path
+    sub(/\/Data\/Library\/Caches$/, "", k)
+    sub(/.*\//, "", k)
+    sub(/\.(plist|savedState|binarycookies)$/, "", k)
+    sub(/^[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]\./, "", k)
+    sub(/^(systemgroup|groups?)\./, "", k)
+    return tolower(k)
+}
+function matches(key,    i, l) {
+    for (i = 1; i <= nk; i++) {
+        l = K[i]
+        if (l == "") continue
+        if (key == l || index(key, l ".") == 1 || index(l, key ".") == 1 || index(l, key " ") == 1) return 1
+    }
+    return 0
+}
+'
+
 # Fichiers de ~/Library liés à une app (un chemin par ligne)
 app_related_files() {
     local keys dir entry
     keys=$(app_keys "$1" | tr '[:upper:]' '[:lower:]' | sort -u)
     for dir in "${LIB_DIRS[@]}"; do
-        [ -d "$HOME/Library/$dir" ] || continue
-        while IFS= read -r -d '' entry; do
-            is_excluded "$entry" && continue
-            key_matches "$(entry_key "$(basename "$entry")")" "$keys" && printf '%s\n' "$entry"
-        done < <(find "$HOME/Library/$dir" -mindepth 1 -maxdepth 1 -print0)
+        [ -d "$HOME/Library/$dir" ] && find "$HOME/Library/$dir" -mindepth 1 -maxdepth 1 2>/dev/null
+    done | KEYS="$keys" awk "$AWK_KEYS"'{ if (matches(ekey($0))) print }' | while IFS= read -r entry; do
+        is_excluded "$entry" || printf '%s\n' "$entry"
     done
 }
 
@@ -1413,16 +1447,11 @@ user_clean_build() {
     done
     browsers=$(printf '%s' "$browsers" | grep -v '^$' | sort -u)
     # 2. Tous les caches, sauf ceux des apps ouvertes
-    for p in "$HOME/Library/Caches"/* "$HOME/Library/Containers"/*/Data/Library/Caches; do
-        [ -e "$p" ] || continue
-        is_excluded "$p" && continue
-        case "$p" in
-            */Data/Library/Caches) key=$(entry_key "$(basename "${p%/Data/Library/Caches}")") ;;
-            *) key=$(entry_key "$(basename "$p")") ;;
-        esac
-        key_matches "$key" "$running" && continue
-        all="$all$p"$'\n'
-    done
+    all=$(for p in "$HOME/Library/Caches"/* "$HOME/Library/Containers"/*/Data/Library/Caches; do
+              [ -e "$p" ] && printf '%s\n' "$p"
+          done | KEYS="$running" awk "$AWK_KEYS"'{ if (!matches(ekey($0))) print }' | while IFS= read -r p; do
+              is_excluded "$p" || printf '%s\n' "$p"
+          done)
     # 3. Journaux
     for p in "$HOME/Library/Logs"/*; do
         [ -e "$p" ] && ! is_excluded "$p" && logs="$logs$p"$'\n'
@@ -1841,7 +1870,7 @@ spotlight_run() {
 
 # --- surveillance de la Corbeille ------------------------------------------
 
-SENTINEL_LABEL="io.github.benjaminbusselet.core-eraser.sentinel"
+SENTINEL_LABEL="$APP_ID.sentinel"
 SENTINEL_PLIST="$HOME/Library/LaunchAgents/$SENTINEL_LABEL.plist"
 
 sentinel_on() {
@@ -2055,7 +2084,8 @@ maintenance_run() {
 #   api list app-files <app>
 #   api text tm-status|network-diag
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>
-#   api user-clean <0|1|2>...        api dev-clean <nom>...       api version
+#   api user-clean <0|1|2>...        api dev-clean <nom>...       api version | lang
+#   api tr <texte>...                traduit les textes de l'app (une ligne par texte)
 
 api_list() {
     local d app p kb i name path
@@ -2133,6 +2163,12 @@ api_run() {
             done
             return "$rc" ;;
         version) printf '%s\n' "$VERSION" ;;
+        lang) printf '%s\n' "$TOOLS_LANG" ;;
+        tr)
+            # Une app transmet les accents sous forme décomposée (e + accent) : on les recompose
+            for p in "$@"; do
+                printf '%s\n' "$(t "$(printf '%s' "$p" | iconv -f UTF-8-MAC -t UTF-8)")"
+            done ;;
         *) return 2 ;;
     esac
 }
@@ -2286,6 +2322,19 @@ Option	Option
   --dry-run <cmd>   : simulation, rien n'est modifié	  --dry-run <cmd>   : simulation, nothing is changed
   --version         : version de core-eraser	  --version         : core-eraser version
 oui	yes
+Analyser	Scan
+Mettre à la Corbeille	Move to Trash
+Protéger	Protect
+Simulation (rien n'est modifié)	Simulation (nothing is changed)
+Exécuter	Run
+Copier	Copy
+Résultat	Result
+Langue	Language
+Clique sur Analyser pour chercher les restes.	Click Scan to look for leftovers.
+Mettre la sélection à la Corbeille ?	Move the selection to the Trash?
+Exécuter les opérations cochées ?	Run the checked tasks?
+Commandes à lancer toi-même dans Terminal (droits administrateur) :	Commands to run yourself in Terminal (administrator rights):
+Annuler	Cancel
 Confirmer ? (oui/non) 	Confirm? (yes/no) 
 Annulé.	Cancelled.
 Attention : un processus Claude Code semble actif. Ferme-le avant de continuer.	Warning: a Claude Code process seems to be running. Close it before continuing.

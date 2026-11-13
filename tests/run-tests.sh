@@ -124,7 +124,7 @@ fake_app "CoreEraserTest" "com.test.coreeraser.app"
 touch "$T/Library/Preferences/com.test.coreeraser.app.plist" "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
 api() { run api "$@" </dev/null; }
 out=$(api list orphans)
-check "list orphans : 4 colonnes, reste détecté" bash -c "awk -F'\t' '/com.test.coreeraser.leftover.plist/ && NF == 4 { f = 1 } END { exit !f }' <<< \"\$1\"" _ "$out"
+check "list orphans : 5 colonnes, reste détecté" bash -c "awk -F'\t' '/com.test.coreeraser.leftover.plist/ && NF == 5 { f = 1 } END { exit !f }' <<< \"\$1\"" _ "$out"
 check "list apps : la fausse app est listée, fermée" grep -q "^0	$T/Applications/CoreEraserTest.app$" <<< "$(api list apps)"
 check "list app-files : réglages de l'app" grep -q "com.test.coreeraser.app.plist$" <<< "$(api list app-files "$T/Applications/CoreEraserTest.app")"
 check "list user-clean : 3 lignes" test "$(api list user-clean | wc -l | tr -d ' ')" = 3
