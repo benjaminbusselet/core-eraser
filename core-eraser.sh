@@ -307,7 +307,12 @@ trash_item() {
         msg "[simulation] %s -> Corbeille" "$src"
         return 0
     fi
-    mv "$src" "$dest" && count=$((count + 1))
+    if mv "$src" "$dest" 2>/dev/null; then
+        count=$((count + 1))
+    else
+        msg "Refusé par macOS : %s (donne l'accès complet au disque à l'app ou au Terminal, dans Réglages Système > Confidentialité et sécurité)" "$src"
+        return 1
+    fi
 }
 
 # --- conversations --------------------------------------------------------
@@ -2322,6 +2327,7 @@ Option	Option
   --dry-run <cmd>   : simulation, rien n'est modifié	  --dry-run <cmd>   : simulation, nothing is changed
   --version         : version de core-eraser	  --version         : core-eraser version
 oui	yes
+Refusé par macOS : %s (donne l'accès complet au disque à l'app ou au Terminal, dans Réglages Système > Confidentialité et sécurité)	Refused by macOS: %s (give Full Disk Access to the app or to Terminal, in System Settings > Privacy & Security)
 Analyser	Scan
 Mettre à la Corbeille	Move to Trash
 Protéger	Protect
