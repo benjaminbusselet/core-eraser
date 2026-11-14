@@ -16,3 +16,11 @@
 - [x] Trash monitoring (`sentinel`) through the app, which can hold Full Disk Access
 - [x] Optional cleanup when the Time Machine disk is plugged in
 - [x] Known limits listed in the README (beta versions in `updates`, column alignment)
+
+## 0.4.0
+- [ ] Real-world check: sentinel and tm-clean run by launchd through the app; downloaded zip opens after "Open Anyway"
+- [ ] Universal app (Apple silicon and Intel): build both architectures, merge with lipo
+- [ ] App screens for the remaining commands: lipo-app, Spotlight, Claude Code (conversations, cache), zsh history
+- [ ] Time Machine screen: exclusions (list, add, remove), analysis of the largest backed-up folders, differences between backups
+- [ ] Settings: add a protected item from the app (file picker)
+- [ ] Script tables: align columns with accented characters (remove this known limitation)
