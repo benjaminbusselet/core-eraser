@@ -41,11 +41,18 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 230)
         } detail: {
-            switch screen ?? .maintenance {
-            case .maintenance: MaintenanceView()
-            case .uninstall: UninstallView()
-            case .leftovers: LeftoversView()
+            VStack(spacing: 0) {
+                if !state.hasFullDiskAccess { FullDiskAccessBanner() }
+                switch screen ?? .maintenance {
+                case .maintenance: MaintenanceView()
+                case .uninstall: UninstallView()
+                case .leftovers: LeftoversView()
+                }
             }
+        }
+        // Revérifie au retour des Réglages Système
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            state.checkFullDiskAccess()
         }
         .toolbar {
             ToolbarItemGroup {
@@ -63,5 +70,25 @@ struct ContentView: View {
                 .pickerStyle(.menu)
             }
         }
+    }
+}
+
+/// Bandeau affiché tant que l'accès complet au disque manque.
+struct FullDiskAccessBanner: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+            Text(state.t("L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés."))
+            Spacer()
+            Button(state.t("Ouvrir les réglages")) {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+        .padding(10)
+        .background(.yellow.opacity(0.15))
     }
 }

@@ -54,6 +54,7 @@ enum Script {
 final class AppState: ObservableObject {
     @Published var lang = "en"
     @Published var dryRun = false
+    @Published var hasFullDiskAccess = true
     @Published private var table: [String: String] = [:]
 
     /// Textes de l'app, écrits en français comme dans le script.
@@ -66,12 +67,15 @@ final class AppState: ObservableObject {
         "Élément", "Détail", "Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite.", "Clique sur Analyser pour chercher les restes.",
         "Mettre la sélection à la Corbeille ?", "Exécuter les opérations cochées ?", "Annuler",
         "Commandes à lancer toi-même dans Terminal (droits administrateur) :",
+        "L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés.",
+        "Ouvrir les réglages",
     ]
 
     /// Traduit un texte français ; sans traduction connue, le texte est gardé tel quel.
     func t(_ french: String) -> String { table[french] ?? french }
 
     func load() async {
+        checkFullDiskAccess()
         let current = await Script.run(["lang"])
         let value = current.output.trimmingCharacters(in: .whitespacesAndNewlines)
         if value == "fr" || value == "en" { lang = value }
@@ -89,6 +93,21 @@ final class AppState: ObservableObject {
         process.waitUntilExit()
         lang = value
         await loadTranslations()
+    }
+
+    /// Dossiers lisibles seulement avec l'accès complet au disque.
+    /// Un refus d'accès sur l'un d'eux suffit ; un dossier absent est ignoré.
+    func checkFullDiskAccess() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let probes = ["Library/Safari", "Library/Mail", "Library/Messages", ".Trash"]
+        hasFullDiskAccess = !probes.contains { path in
+            do {
+                _ = try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(path).path)
+                return false
+            } catch let error as NSError {
+                return error.code == NSFileReadNoPermissionError
+            }
+        }
     }
 
     private func loadTranslations() async {

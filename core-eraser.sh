@@ -2439,6 +2439,8 @@ Clique sur Analyser pour chercher les restes.	Click Scan to look for leftovers.
 Mettre la sélection à la Corbeille ?	Move the selection to the Trash?
 Exécuter les opérations cochées ?	Run the checked tasks?
 Commandes à lancer toi-même dans Terminal (droits administrateur) :	Commands to run yourself in Terminal (administrator rights):
+L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés.	Full Disk Access is missing: the Trash and app containers cannot be scanned.
+Ouvrir les réglages	Open Settings
 Annuler	Cancel
 Confirmer ? (oui/non) 	Confirm? (yes/no) 
 Annulé.	Cancelled.

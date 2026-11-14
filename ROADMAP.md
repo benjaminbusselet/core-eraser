@@ -8,7 +8,7 @@
 - [ ] Remaining screens: plug-ins, services, packages, updates, Homebrew, Time Machine, network, settings
 - [ ] npx tools (`~/.npm/_npx`) as a separate developer cache: one line per tool (name, size, date), never remove a tool in use
 - [x] Sign the app with a stable identity, so Full Disk Access survives rebuilds
-- [ ] Banner when Full Disk Access is missing
+- [x] Banner when Full Disk Access is missing
 - [ ] Faster leftover scan (still about 23 s)
 - [ ] Build the app in CI, attach it to the release, update the READMEs
 
