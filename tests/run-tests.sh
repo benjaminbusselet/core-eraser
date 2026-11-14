@@ -168,7 +168,7 @@ sleep 1
 check "npx-tools : outil en cours d'utilisation repéré" grep -q $'\t1\t'"$T/.npm/_npx/bbb"'$' <<< "$(api list npx-tools)"
 api npx-remove "$T/.npm/_npx/bbb" >/dev/null
 check "npx-remove : outil en cours d'utilisation gardé" test -d "$T/.npm/_npx/bbb"
-kill "$busy_pid" 2>/dev/null
+{ kill "$busy_pid"; wait "$busy_pid"; } 2>/dev/null
 api npx-remove "$T/.npm/_npx/aaa" >/dev/null
 check "npx-remove : outil supprimé" test ! -e "$T/.npm/_npx/aaa"
 api npx-remove "$T/Library/Preferences" >/dev/null; rc=$?
