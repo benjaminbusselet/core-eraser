@@ -207,8 +207,40 @@ hdr() {
     for x in "$@"; do
         a+=("$(t "$x")")
     done
-    # shellcheck disable=SC2059
-    printf -- "$f" "${a[@]}"
+    cprintf "$f" "${a[@]}"
+}
+
+# printf dont les colonnes %-N.Ms comptent les caractères, pas les octets :
+# un mot accentué ne décale plus la suite de la ligne
+cprintf() {
+    local fmt="$1" out="" pre spec arg w p
+    shift
+    local args=()
+    while [[ $fmt =~ %(-?)([0-9]*)(\.([0-9]+))?([sd]) ]]; do
+        spec=${BASH_REMATCH[0]}
+        pre=${fmt%%"$spec"*}
+        fmt=${fmt#*"$spec"}
+        arg=${1-}
+        shift || true
+        if [ "${BASH_REMATCH[5]}" = "s" ]; then
+            p=${BASH_REMATCH[4]}
+            [ -n "$p" ] && arg=${arg:0:$p}
+            w=${BASH_REMATCH[2]:-0}
+            if [ "${#arg}" -lt "$w" ]; then
+                if [ -n "${BASH_REMATCH[1]}" ]; then
+                    arg="$arg$(printf '%*s' $((w - ${#arg})) '')"
+                else
+                    arg="$(printf '%*s' $((w - ${#arg})) '')$arg"
+                fi
+            fi
+            out="$out$pre%s"
+        else
+            out="$out$pre$spec"
+        fi
+        args+=("$arg")
+    done
+    # shellcheck disable=SC2059  # format construit ci-dessus à partir du format reçu
+    printf -- "$out$fmt" ${args[@]+"${args[@]}"}
 }
 
 lang_run() {
@@ -351,19 +383,12 @@ trash_item() {
 
 # --- conversations --------------------------------------------------------
 
-conv_list() {
-    local f id date project prompt n=0
-    CONV_IDS=()
-    CONV_FILES=()
-    [ -d "$CLAUDE_DIR/projects" ] || { msg "Aucune conversation."; return 0; }
-    command -v jq >/dev/null || { msg "jq requis pour la liste."; exit 1; }
-    hdr "%3s  %-16s  %-24s  %-36s  %s\n" "N°" "Date" "Projet" "Id" "Résumé"
-    printf '%.0s-' {1..145}; echo
+# Une ligne par conversation, la plus récente d'abord : date, projet, id, résumé, fichier
+conv_scan() {
+    local f id date project prompt
+    [ -d "$CLAUDE_DIR/projects" ] && command -v jq >/dev/null || return 0
     while IFS= read -r f; do
-        n=$((n + 1))
         id=$(basename "$f" .jsonl)
-        CONV_IDS+=("$id")
-        CONV_FILES+=("$f")
         date=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$f")
         project=$(basename "$(dirname "$f")")
         prompt=$(jq -r 'select(.type == "ai-title") | .aiTitle' "$f" 2>/dev/null | tail -1 | cut -c1-60)
@@ -371,8 +396,24 @@ conv_list() {
             | .message.content
             | if type == "string" then . else (map(select(.type == "text") | .text) | join(" ")) end' \
             "$f" 2>/dev/null | grep -vE '^[[:space:]]*(<|$)' | head -1 | tr '\n' ' ' | cut -c1-60)
-        printf "%3d  %-16s  %-24.24s  %-36s  %s\n" "$n" "$date" "$project" "$id" "$prompt"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$date" "$project" "$id" "$prompt" "$f"
     done < <(find "$CLAUDE_DIR/projects" -mindepth 2 -maxdepth 2 -name "*.jsonl" -print0 | xargs -0 ls -t 2>/dev/null)
+}
+
+conv_list() {
+    local date project id prompt f n=0
+    CONV_IDS=()
+    CONV_FILES=()
+    [ -d "$CLAUDE_DIR/projects" ] || { msg "Aucune conversation."; return 0; }
+    command -v jq >/dev/null || { msg "jq requis pour la liste."; exit 1; }
+    hdr "%3s  %-16s  %-24s  %-36s  %s\n" "N°" "Date" "Projet" "Id" "Résumé"
+    printf '%.0s-' {1..145}; echo
+    while IFS=$'\t' read -r date project id prompt f; do
+        n=$((n + 1))
+        CONV_IDS+=("$id")
+        CONV_FILES+=("$f")
+        cprintf "%3d  %-16s  %-24.24s  %-36s  %s\n" "$n" "$date" "$project" "$id" "$prompt"
+    done < <(conv_scan)
     [ "$n" -gt 0 ] || msg "Aucune conversation."
 }
 
@@ -591,6 +632,15 @@ zsh_history() {
     msg "Quitte ce terminal avec : kill -9 \$\$ (sinon zsh réécrit l'ancien historique en se fermant)."
 }
 
+# Taille de l'historique du terminal et nombre de sessions enregistrées
+zsh_info() {
+    local lines=0
+    [ -f "$HOME/.zsh_history" ] && lines=$(wc -l < "$HOME/.zsh_history" | tr -d ' ')
+    msg "Historique du terminal : %s (%s lignes)" "$(human_size "$HOME/.zsh_history")" "$lines"
+    msg "Sessions enregistrées : %s" "$(find "$HOME/.zsh_sessions" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+    msg "Ferme les autres terminaux avant : chaque shell ouvert réécrit son historique en quittant."
+}
+
 # --- caches Claude --------------------------------------------------------
 
 claude_cache() {
@@ -766,7 +816,7 @@ orphans_run() {
     while IFS=$'\t' read -r kb dir name path; do
         n=$((n + 1))
         ORPHAN_PATHS+=("$path")
-        printf "%3d  %9s  %-24.24s  %s\n" "$n" "$(fmt_kb "$kb")" "$dir" "$name"
+        cprintf "%3d  %9s  %-24.24s  %s\n" "$n" "$(fmt_kb "$kb")" "$dir" "$name"
     done <<< "$lines"
     ask "Numéros à mettre à la Corbeille, ou x suivi des numéros à protéger (ex : 1 3 ou x 2, vide = rien) : "
     read -r sel
@@ -1024,7 +1074,7 @@ dev_clean_run() {
         n=$((n + 1))
         names+=("$name")
         paths+=("$path")
-        CL_LABELS+=("$(printf '%9s  %-9s  %s' "$(human_size "$path")" "$name" "$path")")
+        CL_LABELS+=("$(cprintf '%9s  %-9s  %s' "$(human_size "$path")" "$name" "$path")")
         CL_DEFAULTS+=(0)
     done < <(dev_caches)
     # Un outil npx par ligne ; ceux en cours d'utilisation ne sont pas proposés
@@ -1033,7 +1083,7 @@ dev_clean_run() {
         n=$((n + 1))
         names+=("npx $name")
         paths+=("$path")
-        CL_LABELS+=("$(printf '%9s  %-9s  %s  (%s)' "$(fmt_kb "$kb")" "npx" "$name" "$date")")
+        CL_LABELS+=("$(cprintf '%9s  %-9s  %s  (%s)' "$(fmt_kb "$kb")" "npx" "$name" "$date")")
         CL_DEFAULTS+=(0)
     done < <(npx_tools)
     [ "$busy" -eq 0 ] || msg "(%s outil(s) npx en cours d'utilisation : non proposé(s))" "$busy"
@@ -1067,7 +1117,7 @@ brew_manage_run() {
         n=$((n + 1))
         names+=("$name")
         kinds+=("$kind")
-        printf "%3d  %-6s  %9s  %-28.28s  %s\n" "$n" "$(t "$kind")" "$(fmt_kb "$kb")" "$name" "$state"
+        cprintf "%3d  %-6s  %9s  %-28.28s  %s\n" "$n" "$(t "$kind")" "$(fmt_kb "$kb")" "$name" "$state"
     done < <(brew_scan)
     [ "$n" -gt 0 ] || { msg "Rien d'installé avec Homebrew."; return 0; }
     deps=$(brew autoremove -n 2>/dev/null | grep -v '^==>')
@@ -1201,7 +1251,7 @@ plugins_run() {
     while IFS=$'\t' read -r kb type name owner path; do
         n=$((n + 1))
         paths+=("$path")
-        printf "%3d  %9s  %-16.16s  %-32.32s  %s\n" "$n" "$(fmt_kb "$kb")" "$type" "$owner" "$name"
+        cprintf "%3d  %9s  %-16.16s  %-32.32s  %s\n" "$n" "$(fmt_kb "$kb")" "$type" "$owner" "$name"
     done <<< "$lines"
     ask "Numéros à retirer (vide = rien) : "
     read -r sel
@@ -1280,7 +1330,7 @@ services_run() {
         n=$((n + 1))
         labels+=("$label")
         paths+=("$path")
-        printf "%3d  %-36.36s  %-20s  %-12s  %s\n" "$n" "$label" "$file" "$state" "$owner"
+        cprintf "%3d  %-36.36s  %-20s  %-12s  %s\n" "$n" "$label" "$file" "$state" "$owner"
     done <<< "$lines"
     ask "Numéros à retirer (vide = rien) : "
     read -r sel
@@ -1353,7 +1403,7 @@ pkg_manage_run() {
         n=$((n + 1))
         ids+=("$id")
         states+=("$state")
-        printf "%3d  %-42.42s  %-10.10s  %-10s  %-12s  %s\n" "$n" "$id" "$ver" "$date" "$files" "$(t "$state")"
+        cprintf "%3d  %-42.42s  %-10.10s  %-10s  %-12s  %s\n" "$n" "$id" "$ver" "$date" "$files" "$(t "$state")"
     done <<< "$lines"
     ask "Numéros dont effacer la trace (vide = rien) : "
     read -r sel
@@ -1437,7 +1487,7 @@ updates_run() {
     while IFS=$'\t' read -r name ver latest how up; do
         num=""
         if [ "$up" != "-" ]; then n=$((n + 1)); num=$n; tokens+=("$up"); fi
-        printf "%3s  %-28.28s  %-14.14s  %-14.14s  %s\n" "$num" "$name" "$ver" "$latest" "$how"
+        cprintf "%3s  %-28.28s  %-14.14s  %-14.14s  %s\n" "$num" "$name" "$ver" "$latest" "$how"
     done < <(updates_scan)
     [ "$n" -gt 0 ] || { msg "Aucune mise à jour Homebrew à faire ici."; return 0; }
     ask "Numéros à mettre à jour avec Homebrew (vide = rien) : "
@@ -1491,27 +1541,40 @@ intel_kb() {
     echo "$kb"
 }
 
-lipo_app_run() {
-    local apps=() gains=() app kb n=0 num backup f before after mode
-    [ "$(uname -m)" = "arm64" ] || { msg "Ce Mac n'a pas de puce Apple : rien à retirer."; return 0; }
-    msg "Analyse en cours..."
-    # Apps qui t'appartiennent (les apps de l'App Store appartiennent à root)
+# Apps qui t'appartiennent (celles de l'App Store appartiennent à root) avec au moins 1 Mo de partie Intel :
+# une ligne par app : Ko gagnés, chemin
+lipo_scan() {
+    local app kb
+    [ "$(uname -m)" = "arm64" ] || return 0
     for app in /Applications/*.app "$HOME/Applications"/*.app; do
         [ -d "$app" ] && [ ! -L "$app" ] && [ -O "$app" ] || continue
         kb=$(universal_files "$app" | intel_kb)
         [ "$kb" -ge 1024 ] || continue
-        n=$((n + 1))
-        apps+=("$app")
-        gains+=("$kb")
-        printf "%3d  %9s  %s\n" "$n" "$(fmt_kb "$kb")" "$(basename "$app" .app)"
+        printf '%s\t%s\n' "$kb" "$app"
     done
-    [ "$n" -gt 0 ] || { msg "Aucune app modifiable avec une partie Intel."; return 0; }
-    echo
+}
+
+lipo_warning() {
     msg "ATTENTION : l'app choisie sera modifiée et sa signature d'origine remplacée par une signature locale."
     msg "  - sa mise à jour automatique peut échouer ;"
     msg "  - macOS peut redemander des autorisations (trousseau, caméra, micro...) ;"
     msg "  - chaque mise à jour remet la version complète : le gain disparaît ;"
     msg "  - une copie de sauvegarde complète est mise dans la Corbeille avant toute modification."
+}
+
+lipo_app_run() {
+    local apps=() gains=() app kb n=0 num
+    [ "$(uname -m)" = "arm64" ] || { msg "Ce Mac n'a pas de puce Apple : rien à retirer."; return 0; }
+    msg "Analyse en cours..."
+    while IFS=$'\t' read -r kb app; do
+        n=$((n + 1))
+        apps+=("$app")
+        gains+=("$kb")
+        printf "%3d  %9s  %s\n" "$n" "$(fmt_kb "$kb")" "$(basename "$app" .app)"
+    done < <(lipo_scan)
+    [ "$n" -gt 0 ] || { msg "Aucune app modifiable avec une partie Intel."; return 0; }
+    echo
+    lipo_warning
     ask "Numéro de l'app (vide = rien) : "
     read -r num
     [ -n "$num" ] || { msg "Rien modifié."; return 0; }
@@ -1520,6 +1583,12 @@ lipo_app_run() {
     offer_quit "$app" || { msg "%s est ouverte : rien fait." "$(basename "$app" .app)"; exit 1; }
     msg "Seront faits sur %s : sauvegarde dans la Corbeille, retrait de %s, signature locale." "$(basename "$app" .app)" "$(fmt_kb "${gains[$((NUM - 1))]}")"
     confirm
+    lipo_strip "$app"
+}
+
+# Retire la partie Intel d'une app ($1) : sauvegarde dans la Corbeille, retrait, signature locale
+lipo_strip() {
+    local app="$1" backup f before after mode
     if [ "$DRY_RUN" -eq 1 ]; then
         msg "[simulation] %s : rien modifié" "$(basename "$app" .app)"
         return 0
@@ -1845,19 +1914,45 @@ tm_status() {
 }
 
 # 2 et 4 : liste des exclusions (les plus grosses), puis retrait éventuel
+# Exclusions, les plus grosses d'abord : Ko, type (réglages|attribut), chemin
+tm_exclusions_scan() {
+    local kind p
+    tm_excluded | while IFS=$'\t' read -r kind p; do
+        printf '%s\t%s\t%s\n' "$(du -sk "$p" 2>/dev/null | cut -f1)" "$kind" "$p"
+    done | sort -rn
+}
+
+# Retire une exclusion ($1 type, $2 chemin) ; celles des réglages demandent sudo
+tm_exclusion_remove() {
+    if [ "$1" = "attribut" ] && tmutil removeexclusion "$2" 2>/dev/null; then
+        count=$((count + 1))
+        msg "Sera de nouveau sauvegardé : %s" "$2"
+    else
+        msg "Droits administrateur requis, lance toi-même : sudo tmutil removeexclusion -p %s" "$(shq "$2")"
+    fi
+}
+
+# Exclut un élément ($1) de Time Machine ; hors de ton dossier perso, sudo peut être requis
+tm_exclusion_add() {
+    if tmutil addexclusion "$1" 2>/dev/null; then
+        count=$((count + 1))
+        msg "Exclu : %s" "${1/#$HOME/~}"
+    else
+        msg "Droits administrateur requis, lance toi-même : sudo tmutil addexclusion -p %s" "$(shq "$1")"
+    fi
+}
+
 tm_exclusions_run() {
     local lines n=0 kb kind p paths=() kinds=() sel num i
     msg "Analyse en cours..."
-    lines=$(tm_excluded | while IFS=$'\t' read -r kind p; do
-                printf '%s\t%s\t%s\n' "$(du -sk "$p" 2>/dev/null | cut -f1)" "$kind" "$p"
-            done | sort -rn)
+    lines=$(tm_exclusions_scan)
     msg "%s exclusions ; les 30 plus grosses :" "$(printf '%s\n' "$lines" | grep -c .)"
     while IFS=$'\t' read -r kb kind p; do
         [ -n "$p" ] || continue
         n=$((n + 1))
         paths+=("$p")
         kinds+=("$kind")
-        printf "%3d  %9s  %-9s  %s\n" "$n" "$(fmt_kb "${kb:-0}")" "$(t "$kind")" "${p/#$HOME/~}"
+        cprintf "%3d  %9s  %-9s  %s\n" "$n" "$(fmt_kb "${kb:-0}")" "$(t "$kind")" "${p/#$HOME/~}"
     done < <(printf '%s\n' "$lines" | head -30)
     [ "${1:-}" = "remove" ] || return 0
     ask "Numéros dont retirer l'exclusion (vide = rien) : "
@@ -1867,12 +1962,7 @@ tm_exclusions_run() {
     check_numbers "$sel" "$n"
     for num in $sel; do
         i=$((10#$num - 1))
-        if [ "${kinds[$i]}" = "attribut" ] && tmutil removeexclusion "${paths[$i]}" 2>/dev/null; then
-            count=$((count + 1))
-            msg "Sera de nouveau sauvegardé : %s" "${paths[$i]}"
-        else
-            msg "Droits administrateur requis, lance toi-même : sudo tmutil removeexclusion -p %s" "$(shq "${paths[$i]}")"
-        fi
+        tm_exclusion_remove "${kinds[$i]}" "${paths[$i]}"
     done
 }
 
@@ -1883,14 +1973,14 @@ tm_candidates() {
 }
 
 # 3 : plus gros dossiers encore sauvegardés (exclusions déduites), puis exclusion au choix
-tm_analyse_run() {
-    local excl lines n=0 kb p paths=() sel num
-    msg "Analyse en cours (une à quelques minutes)..."
+# 15 plus gros dossiers encore sauvegardés (exclusions déduites) : Ko, chemin
+tm_analysis_scan() {
+    local excl p
     excl=$(tm_excluded | cut -f2 | while IFS= read -r p; do
                printf '%s\t%s\n' "$(du -sk "$p" 2>/dev/null | cut -f1)" "$p"
            done)
     # Un seul flux : lignes "E" (exclusions) puis lignes "C" (dossiers candidats)
-    lines=$({ printf '%s\n' "$excl" | sed 's/^/E\t/'
+    { printf '%s\n' "$excl" | sed 's/^/E\t/'
               { tm_candidates "$HOME" 2; tm_candidates /Library 1; tm_candidates /opt 1
                 tm_candidates /usr/local 1; tm_candidates /private/var 1; } | sed 's/^/C\t/'; } \
         | awk -F'\t' '
@@ -1900,7 +1990,13 @@ tm_analyse_run() {
                   if (p == e || index(p, e "/") == 1) { skip = 1; break }
                   if (index(e, p "/") == 1) kb -= ek[e]
               }
-              if (!skip && kb > 0) print kb "\t" p }' | sort -rn | head -15)
+              if (!skip && kb > 0) print kb "\t" p }' | sort -rn | head -15
+}
+
+tm_analyse_run() {
+    local lines n=0 kb p paths=() sel num
+    msg "Analyse en cours (une à quelques minutes)..."
+    lines=$(tm_analysis_scan)
     hdr "%3s  %9s  %s\n" "N°" "Taille" "Dossier encore sauvegardé"
     while IFS=$'\t' read -r kb p; do
         [ -n "$p" ] || continue
@@ -1914,13 +2010,7 @@ tm_analyse_run() {
     [ -n "$sel" ] || { msg "Rien changé."; return 0; }
     check_numbers "$sel" "$n"
     for num in $sel; do
-        p="${paths[$((10#$num - 1))]}"
-        if tmutil addexclusion "$p" 2>/dev/null; then
-            count=$((count + 1))
-            msg "Exclu : %s" "${p/#$HOME/~}"
-        else
-            msg "Droits administrateur requis, lance toi-même : sudo tmutil addexclusion -p %s" "$(shq "$p")"
-        fi
+        tm_exclusion_add "${paths[$((10#$num - 1))]}"
     done
 }
 
@@ -1938,7 +2028,7 @@ tm_unique_run() {
         umount "$mnt/s" 2>/dev/null
         n=$((n + 1))
         dates+=("$b")
-        printf "%3d  %-19s  %s\n" "$n" "$b" "${kb:-?}"
+        cprintf "%3d  %-19s  %s\n" "$n" "$b" "${kb:-?}"
     done < <(tm_backups "$dest")
     rmdir "$mnt/s" "$mnt" 2>/dev/null
     [ "${1:-}" = "delete" ] || return 0
@@ -1960,7 +2050,7 @@ tm_unique_run() {
 
 # 8 : différences d'une sauvegarde avec la précédente
 tm_compare_run() {
-    local dest mnt dates=() n=0 b num old new out
+    local dest dates=() n=0 b num
     dest=$(tm_dest)
     [ -n "$dest" ] || { msg "Disque Time Machine débranché."; return 0; }
     while IFS= read -r b; do
@@ -1974,9 +2064,15 @@ tm_compare_run() {
     [ -n "$num" ] || { msg "Rien fait."; return 0; }
     one_number "$num" "$n"
     [ "$NUM" -ge 2 ] || { msg "La n° 1 n'a pas de précédente."; return 0; }
+    tm_compare "$dest" "${dates[$((NUM - 2))]}" "${dates[$((NUM - 1))]}"
+}
+
+# Différences entre deux sauvegardes ($1 destination, $2 et $3 dates, de la plus ancienne à la plus récente)
+tm_compare() {
+    local mnt old new out sign
     mnt=$(mktemp -d)
-    old=$(tm_mount "$dest" "${dates[$((NUM - 2))]}" "$mnt/a")
-    new=$(tm_mount "$dest" "${dates[$((NUM - 1))]}" "$mnt/b")
+    old=$(tm_mount "$1" "$2" "$mnt/a")
+    new=$(tm_mount "$1" "$3" "$mnt/b")
     msg "Comparaison en cours (environ une minute)..."
     out=$(tmutil compare -s "$old" "$new" 2>/dev/null)
     umount "$mnt/a" "$mnt/b" 2>/dev/null
@@ -2033,30 +2129,43 @@ tm_start() {
 
 # --- index Spotlight -------------------------------------------------------
 
-spotlight_run() {
-    local vols=() vol line state n=0 num
-    hdr "%3s  %-28s  %s\n" "N°" "Disque" "État de l'index"
+# Une ligne par disque : point de montage, état de l'index (traduit)
+spotlight_scan() {
+    local vol="" line state
     # mdutil -s -a : une ligne "disque:" suivie d'une ligne d'état
     while IFS= read -r line; do
         case "$line" in
             /*:) vol="${line%:}" ;;
             *)
-                [ -n "${vol:-}" ] || continue
+                [ -n "$vol" ] || continue
                 state=$(echo "$line" | sed 's/^[[:space:]]*//; s/Indexing enabled\./indexation active/; s/Indexing disabled\./indexation désactivée/; s/[[:space:]]*$//')
-                n=$((n + 1))
-                vols+=("$vol")
-                printf "%3d  %-28s  %s\n" "$n" "$vol" "$(t "$state")"
+                printf '%s\t%s\n' "$vol" "$(t "$state")"
                 vol="" ;;
         esac
     done < <(mdutil -s -a 2>/dev/null)
+}
+
+# Commande pour reconstruire l'index d'un disque ($1)
+spotlight_hint() {
+    msg "Droits administrateur requis, lance toi-même :"
+    msg "  sudo mdutil -E %s" "$(shq "$1")"
+    msg "La reconstruction se fait en arrière-plan (de quelques minutes à une heure) ; la recherche est incomplète pendant ce temps."
+}
+
+spotlight_run() {
+    local vols=() vol state n=0 num
+    hdr "%3s  %-28s  %s\n" "N°" "Disque" "État de l'index"
+    while IFS=$'\t' read -r vol state; do
+        n=$((n + 1))
+        vols+=("$vol")
+        cprintf "%3d  %-28s  %s\n" "$n" "$vol" "$state"
+    done < <(spotlight_scan)
     [ "$n" -gt 0 ] || { msg "Aucun disque trouvé."; return 0; }
     ask "Numéro du disque dont reconstruire l'index (vide = rien) : "
     read -r num
     [ -n "$num" ] || { msg "Rien fait."; return 0; }
     one_number "$num" "$n"
-    msg "Droits administrateur requis, lance toi-même :"
-    msg "  sudo mdutil -E %s" "$(shq "${vols[$((NUM - 1))]}")"
-    msg "La reconstruction se fait en arrière-plan (de quelques minutes à une heure) ; la recherche est incomplète pendant ce temps."
+    spotlight_hint "${vols[$((NUM - 1))]}"
 }
 
 # --- surveillance de la Corbeille ------------------------------------------
@@ -2353,6 +2462,9 @@ maintenance_run() {
 #   api text tm-status|network-diag|dns-test [site]|dns-flush|speed-test     api tm-backup
 #   api service-remove <fichier>...  api pkg-forget <paquet>...   api brew-upgrade <app>...   api brew-uninstall <nom>...
 #   api brew-autoremove              api sentinel on|off|status   api tm-clean on|off|status
+#   api list convs|lipo-apps|spotlight|tm-exclusions|tm-analysis   api text claude-notice|zsh-info|lipo-warning|tm-compare
+#   api conv-trash <id>...  api claude-cache  api zsh-history  api lipo-app <app>...  api spotlight-rebuild <disque>...
+#   api tm-exclude-add <chemin>...   api tm-exclude-remove <chemin>...
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>   api plugin-remove <chemin>...
 #   api user-clean <0|1|2>...        api dev-clean <nom>...       api npx-remove <dossier>...   api version | lang
 #   api quit <app>...                ferme des apps (comme Cmd+Q)      api cask <app>   nom du cask Homebrew
@@ -2394,6 +2506,17 @@ api_list() {
                 printf '%s\t%s\t%s\n' "$(du -sk "$path" 2>/dev/null | cut -f1)" "$name" "$path"
             done ;;
         npx-tools) npx_tools ;;
+        convs) conv_scan ;;
+        lipo-apps)
+            lipo_scan | while IFS=$'\t' read -r kb path; do
+                printf '%s\t%s\t%s\n' "$kb" "$(basename "$path" .app)" "$path"
+            done ;;
+        spotlight) spotlight_scan ;;
+        tm-exclusions)
+            tm_exclusions_scan | while IFS=$'\t' read -r kb kind path; do
+                printf '%s\t%s\t%s\n' "${kb:-0}" "$(t "$kind")" "$path"
+            done ;;
+        tm-analysis) tm_analysis_scan ;;
         user-clean)
             user_clean_build
             for i in 0 1 2; do
@@ -2430,6 +2553,15 @@ api_run() {
                 dns-test) network_resolve "${2:-apple.com}" ;;
                 dns-flush) network_flush_hint ;;
                 speed-test) network_speed ;;
+                claude-notice) claude_notice; warn_running ;;
+                zsh-info) zsh_info ;;
+                lipo-warning) lipo_warning ;;
+                tm-compare)
+                    dest=$(tm_dest)
+                    [ -n "$dest" ] || { msg "Disque Time Machine débranché."; return 0; }
+                    last=$(tm_backups "$dest" | tail -2)
+                    [ "$(printf '%s\n' "$last" | grep -c .)" -ge 2 ] || { msg "Il faut au moins deux sauvegardes."; return 0; }
+                    tm_compare "$dest" "$(printf '%s\n' "$last" | head -1)" "$(printf '%s\n' "$last" | tail -1)" ;;
                 *) return 2 ;;
             esac ;;
         trash)
@@ -2437,7 +2569,11 @@ api_run() {
                 trash_item "$p" || rc=1
             done
             return "$rc" ;;
-        exclude-add) exclude_add "${1:-}" ;;
+        exclude-add)
+            for p in "$@"; do
+                exclude_add "$p" || rc=1
+            done
+            return "$rc" ;;
         exclude-remove)
             [ -n "${1:-}" ] && [ -f "$EXCLUDE_FILE" ] || return 1
             for p in "$@"; do
@@ -2512,6 +2648,40 @@ api_run() {
             fi
             return "$rc" ;;
         tm-backup) tm_start ;;
+        conv-trash)
+            ASSUME_YES=1
+            for p in "$@"; do
+                # conv_one s'arrête (exit) sur un id inconnu : sous-shell pour traiter les suivants
+                ( conv_one "$p" ) || rc=1
+            done
+            return "$rc" ;;
+        claude-cache) ASSUME_YES=1; claude_cache ;;
+        zsh-history) ASSUME_YES=1; zsh_history ;;
+        lipo-app)
+            known=$(lipo_scan)
+            for p in "$@"; do
+                grep -qxF "$p" <<< "$(cut -f2 <<< "$known")" || { rc=2; continue; }
+                if offer_quit "$p"; then lipo_strip "$p" || rc=1; else msg "%s est ouverte : rien fait." "$(basename "$p" .app)"; rc=1; fi
+            done
+            return "$rc" ;;
+        spotlight-rebuild)
+            known=$(spotlight_scan | cut -f1)
+            for p in "$@"; do
+                if grep -qxF "$p" <<< "$known"; then spotlight_hint "$p"; else rc=2; fi
+            done
+            return "$rc" ;;
+        tm-exclude-add)
+            for p in "$@"; do
+                if [ -e "$p" ]; then tm_exclusion_add "$p"; else rc=2; fi
+            done
+            return "$rc" ;;
+        tm-exclude-remove)
+            known=$(tm_excluded)
+            for p in "$@"; do
+                kind=$(awk -F'\t' -v p="$p" '$2 == p { print $1; exit }' <<< "$known")
+                if [ -n "$kind" ]; then tm_exclusion_remove "$kind" "$p"; else rc=2; fi
+            done
+            return "$rc" ;;
         sentinel)
             case "${1:-}" in
                 on) sentinel_on ;;
@@ -2738,6 +2908,23 @@ Retirer la sélection ?	Remove the selection?
 aucune (disque débranché ?)	none (disk unplugged?)
 [simulation] tmutil startbackup	[simulation] tmutil startbackup
 Adresse : %s	Address: %s
+Historique du terminal : %s (%s lignes)	Terminal history: %s (%s lines)
+Sessions enregistrées : %s	Saved sessions: %s
+Exclusions	Exclusions
+Analyse	Analysis
+Retirer l'exclusion	Remove the exclusion
+Exclure…	Exclude…
+Exclure de Time Machine	Exclude from Time Machine
+Différences avec la sauvegarde précédente	Differences with the previous backup
+Gain	Saving
+Retirer la partie Intel	Strip the Intel part
+Modifier la sélection ? Une sauvegarde va dans la Corbeille.	Modify the selection? A backup goes to the Trash.
+Reconstruire l'index	Rebuild the index
+Date	Date
+Vider les caches Claude Code	Empty the Claude Code caches
+Vider les caches Claude Code ?	Empty the Claude Code caches?
+Vider l'historique du terminal ?	Empty the terminal history?
+Ajouter…	Add…
 Ouvrir core-eraser	Open core-eraser
 Nettoyage au branchement déjà actif.	Cleanup on plug-in already on.
 Nettoyage au branchement du disque Time Machine actif.	Cleanup when the Time Machine disk is plugged in: on.

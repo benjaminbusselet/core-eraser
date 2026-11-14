@@ -11,8 +11,14 @@ ID="io.github.benjaminbusselet.core-eraser"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-swiftc -O -parse-as-library -target "$(uname -m)-apple-macos13.0" \
-    "$ROOT"/app/Sources/*.swift -o "$APP/Contents/MacOS/core-eraser"
+# App universelle (puce Apple et Intel) : une compilation par architecture, réunies par lipo
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+for ARCH in arm64 x86_64; do
+    swiftc -O -parse-as-library -target "$ARCH-apple-macos13.0" \
+        "$ROOT"/app/Sources/*.swift -o "$TMP/core-eraser-$ARCH"
+done
+lipo -create "$TMP/core-eraser-arm64" "$TMP/core-eraser-x86_64" -output "$APP/Contents/MacOS/core-eraser"
 
 cp "$ROOT/core-eraser.sh" "$APP/Contents/Resources/core-eraser.sh"
 chmod +x "$APP/Contents/Resources/core-eraser.sh"

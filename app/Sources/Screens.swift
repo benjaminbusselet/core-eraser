@@ -50,11 +50,86 @@ struct BrewView: View {
     }
 }
 
+/// Time Machine : état et sauvegardes, exclusions, analyse des plus gros dossiers encore sauvegardés.
 struct TimeMachineView: View {
+    @EnvironmentObject private var state: AppState
+    @State private var tab = 0
+
     var body: some View {
-        CommandScreen(title: "Time Machine",
-                      commands: [CommandButton(title: "Afficher l'état", args: ["text", "tm-status"]),
-                                 CommandButton(title: "Lancer une sauvegarde maintenant", args: ["tm-backup"])])
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) {
+                Text(state.t("État")).tag(0)
+                Text(state.t("Exclusions")).tag(1)
+                Text(state.t("Analyse")).tag(2)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding([.horizontal, .top])
+            switch tab {
+            case 1:
+                ListScreen(title: "Time Machine", list: ["list", "tm-exclusions"], columnCount: 3, idColumn: 2,
+                           columns: [ScreenColumn(title: "Taille", index: 0, isSize: true, width: 80),
+                                     ScreenColumn(title: "Type", index: 1, width: 100),
+                                     ScreenColumn(title: "Dossier", index: 2)],
+                           actions: [ScreenAction(title: "Retirer l'exclusion", command: "tm-exclude-remove")],
+                           pick: ScreenAction(title: "Exclure…", command: "tm-exclude-add"))
+            case 2:
+                ListScreen(title: "Time Machine", list: ["list", "tm-analysis"], columnCount: 2, idColumn: 1,
+                           columns: [ScreenColumn(title: "Taille", index: 0, isSize: true, width: 80),
+                                     ScreenColumn(title: "Dossier encore sauvegardé", index: 1)],
+                           actions: [ScreenAction(title: "Exclure de Time Machine", command: "tm-exclude-add")])
+            default:
+                CommandScreen(title: "Time Machine",
+                              commands: [CommandButton(title: "Afficher l'état", args: ["text", "tm-status"]),
+                                         CommandButton(title: "Lancer une sauvegarde maintenant", args: ["tm-backup"]),
+                                         CommandButton(title: "Différences avec la sauvegarde précédente",
+                                                       args: ["text", "tm-compare"])])
+            }
+        }
+    }
+}
+
+struct LipoView: View {
+    var body: some View {
+        ListScreen(title: "Retirer la partie Intel d'une app", list: ["list", "lipo-apps"], columnCount: 3, idColumn: 2,
+                   columns: [ScreenColumn(title: "Gain", index: 0, isSize: true, width: 90),
+                             ScreenColumn(title: "App", index: 1)],
+                   actions: [ScreenAction(title: "Retirer la partie Intel", command: "lipo-app",
+                                          confirm: "Modifier la sélection ? Une sauvegarde va dans la Corbeille.")],
+                   note: ["text", "lipo-warning"])
+    }
+}
+
+struct SpotlightView: View {
+    var body: some View {
+        ListScreen(title: "Index Spotlight", list: ["list", "spotlight"], columnCount: 2, idColumn: 0,
+                   columns: [ScreenColumn(title: "Disque", index: 0),
+                             ScreenColumn(title: "État de l'index", index: 1, width: 220)],
+                   actions: [ScreenAction(title: "Reconstruire l'index", command: "spotlight-rebuild")])
+    }
+}
+
+/// Conversations Claude Code (à traiter avec Claude Code fermé) et caches.
+struct ClaudeView: View {
+    var body: some View {
+        ListScreen(title: "Claude Code", list: ["list", "convs"], columnCount: 5, idColumn: 2,
+                   columns: [ScreenColumn(title: "Date", index: 0, width: 140),
+                             ScreenColumn(title: "Projet", index: 1, width: 200),
+                             ScreenColumn(title: "Résumé", index: 3)],
+                   actions: [ScreenAction(title: "Mettre à la Corbeille", command: "conv-trash",
+                                          confirm: "Mettre la sélection à la Corbeille ?"),
+                             ScreenAction(title: "Vider les caches Claude Code", command: "claude-cache",
+                                          confirm: "Vider les caches Claude Code ?", needsSelection: false)],
+                   note: ["text", "claude-notice"])
+    }
+}
+
+struct ZshHistoryView: View {
+    var body: some View {
+        CommandScreen(title: "Vider l'historique du terminal",
+                      commands: [CommandButton(title: "Afficher l'état", args: ["text", "zsh-info"]),
+                                 CommandButton(title: "Vider l'historique du terminal", args: ["zsh-history"],
+                                               confirm: "Vider l'historique du terminal ?")])
     }
 }
 
@@ -87,7 +162,8 @@ struct SettingsView: View {
                 .padding([.horizontal, .top])
             ListScreen(title: "Réglages de core-eraser", list: ["list", "excludes"], columnCount: 1, idColumn: 0,
                        columns: [ScreenColumn(title: "Éléments protégés", index: 0)],
-                       actions: [ScreenAction(title: "Retirer", command: "exclude-remove")])
+                       actions: [ScreenAction(title: "Retirer", command: "exclude-remove")],
+                       pick: ScreenAction(title: "Ajouter…", command: "exclude-add"))
         }
         .task { await loadAgents() }
     }
@@ -110,7 +186,8 @@ struct SettingsView: View {
 
 struct CommandButton {
     let title: String
-    let args: [String]     // commande api complète
+    let args: [String]           // commande api complète
+    var confirm: String? = nil   // question posée avant de lancer
 }
 
 /// Écran de commandes : chaque bouton lance une commande de l'API ; la première est lancée à l'ouverture.
@@ -120,13 +197,16 @@ struct CommandScreen: View {
     let commands: [CommandButton]
     @State private var output = ""
     @State private var loading = false
+    @State private var pending: CommandButton?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 ForEach(commands, id: \.title) { command in
-                    Button(state.t(command.title)) { Task { await run(command) } }
-                        .disabled(loading)
+                    Button(state.t(command.title)) {
+                        if command.confirm == nil { Task { await run(command) } } else { pending = command }
+                    }
+                    .disabled(loading)
                 }
                 if loading { ProgressView().controlSize(.small) }
                 Spacer()
@@ -138,6 +218,13 @@ struct CommandScreen: View {
         .padding()
         .navigationTitle(state.t(title))
         .task(id: state.lang) { if let first = commands.first { await run(first) } }
+        .confirmationDialog(state.t(pending?.confirm ?? ""),
+                            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
+            if let command = pending {
+                Button(state.t(command.title), role: .destructive) { Task { await run(command) } }
+            }
+            Button(state.t("Annuler"), role: .cancel) {}
+        }
     }
 
     private func run(_ command: CommandButton) async {

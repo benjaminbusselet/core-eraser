@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- App: Spotlight, Strip the Intel part, Claude Code (conversations, caches) and terminal history screens.
+- App: Time Machine tabs for exclusions (list, add, remove) and the largest folders still backed up; differences with the previous backup.
+- App: add protected items from Settings with a file picker.
+
+### Changed
+
+- The app is universal (Apple silicon and Intel).
+
+### Fixed
+
+- Script tables stay aligned with accented characters.
+
 ## [0.3.0] - 2026-11-14
 
 ### Added

@@ -97,6 +97,12 @@ final class AppState: ObservableObject {
         "Diagnostic", "Test DNS (apple.com)", "Test de débit (environ 20 s)", "Vider le cache DNS",
         "Surveiller la Corbeille (fichiers laissés par les apps qu'on y jette)", "Éléments protégés",
         "Vider caches des navigateurs fermés et journaux au branchement du disque Time Machine",
+        "Exclusions", "Analyse", "Retirer l'exclusion", "Exclure…", "Dossier encore sauvegardé", "Exclure de Time Machine",
+        "Différences avec la sauvegarde précédente", "Index Spotlight", "Retirer la partie Intel d'une app", "Gain",
+        "Retirer la partie Intel", "Modifier la sélection ? Une sauvegarde va dans la Corbeille.", "Disque",
+        "État de l'index", "Reconstruire l'index", "Claude Code", "Date", "Projet", "Résumé",
+        "Vider les caches Claude Code", "Vider les caches Claude Code ?", "Vider l'historique du terminal",
+        "Vider l'historique du terminal ?", "Ajouter…",
     ]
 
     /// Traduit un texte français ; sans traduction connue, le texte est gardé tel quel.

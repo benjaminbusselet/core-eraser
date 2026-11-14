@@ -195,6 +195,20 @@ check "tm-clean-check : journaux vidés quand le disque est branché" test ! -e 
 touch "$T/Library/Logs/new.log"
 lib 'tm_dest() { echo /Volumes/TM; }; osascript() { :; }; tm_clean_check' >/dev/null
 check "tm-clean-check : pas de second nettoyage avant 20 h" test -e "$T/Library/Logs/new.log"
+check "cprintf : un mot accentué occupe autant de colonnes qu'un mot sans accent" \
+    test "$(lib 'cprintf "%-10s|" "Installé"' | sed 's/é/e/')" = "$(lib 'cprintf "%-10s|" "Installe"')"
+check "cprintf : coupe en caractères" test "$(lib 'cprintf "%-3.3s|" "Été!"')" = "Été|"
+api spotlight-rebuild /nope >/dev/null; rc=$?
+check "spotlight-rebuild sur un disque inconnu : refusé" test "$rc" -eq 2
+api tm-exclude-add "$T/absent" >/dev/null; rc=$?
+check "tm-exclude-add sur un chemin absent : refusé" test "$rc" -eq 2
+api lipo-app "$T/Applications/Absent.app" >/dev/null; rc=$?
+check "lipo-app sur une app hors liste : refusé" test "$rc" -eq 2
+api conv-trash not-an-id >/dev/null; rc=$?
+check "conv-trash sur un id invalide : refusé" test "$rc" -ne 0
+printf 'ls\n' > "$T/.zsh_history"
+api zsh-history >/dev/null
+check "zsh-history : historique remplacé par un fichier vide" test -f "$T/.zsh_history" -a ! -s "$T/.zsh_history"
 api list inconnu >/dev/null; rc=$?
 check "demande inconnue : code 2" test "$rc" -eq 2
 check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"

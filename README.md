@@ -48,7 +48,7 @@ cd core-eraser
 
 Optional shortcut in `~/.zshrc`: `alias eraser='/path/to/core-eraser/core-eraser.sh'`
 
-### App (beta, Apple silicon)
+### App (beta)
 
 - Download `core-eraser-app.zip` from the [Releases](https://github.com/benjaminbusselet/core-eraser/releases) page and unzip it.
 - The app is not notarized by Apple: on first launch, macOS blocks it. Allow it in System Settings > Privacy & Security > "Open Anyway".
@@ -72,7 +72,6 @@ Optional shortcut in `~/.zshrc`: `alias eraser='/path/to/core-eraser/core-eraser
 - `updates` compares versions only for Homebrew, Sparkle and App Store apps; beta versions may be reported as outdated.
 - `lipo-app` replaces the app signature with a local one: automatic updates and permissions may be affected (a warning is shown).
 - The Claude Code commands read the internal layout of `~/.claude`, checked with Claude Code 2.1.323. Another version may change it (a warning is shown).
-- Table columns may shift slightly with accented characters.
 
 ## Tests
 

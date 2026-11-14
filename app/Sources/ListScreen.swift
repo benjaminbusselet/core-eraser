@@ -29,6 +29,9 @@ struct ListScreen: View {
     let idColumn: Int          // colonne transmise aux actions (en général le chemin)
     let columns: [ScreenColumn]
     let actions: [ScreenAction]
+    var note: [String]? = nil      // commande dont le texte s'affiche au-dessus de la liste
+    var pick: ScreenAction? = nil  // bouton qui choisit des fichiers, puis lance la commande avec leurs chemins
+    @State private var noteText = ""
     @State private var rows: [ScreenRow] = []
     @State private var selection = Set<String>()
     @State private var loading = false
@@ -45,12 +48,19 @@ struct ListScreen: View {
                     Text(state.t("Analyse en cours...")).foregroundStyle(.secondary)
                 }
                 Spacer()
+                if let pick {
+                    Button(state.t(pick.title)) { choose(pick) }
+                        .disabled(loading)
+                }
                 ForEach(actions, id: \.command) { action in
                     Button(state.t(action.title)) {
                         if action.confirm == nil { Task { await run(action) } } else { pending = action }
                     }
                     .disabled((action.needsSelection && selection.isEmpty) || loading)
                 }
+            }
+            if !noteText.isEmpty {
+                Text(noteText).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
             }
             // Même retrait que les lignes de la liste
             line(columns.map { state.t($0.title) }).font(.headline).foregroundStyle(.secondary)
@@ -90,6 +100,9 @@ struct ListScreen: View {
 
     private func load() async {
         loading = true
+        if let note {
+            noteText = (await Script.run(note, lang: state.lang)).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let result = await Script.run(list, lang: state.lang)
         rows = result.rows.filter { $0.count == columnCount }.map { ScreenRow(cells: $0, id: $0[idColumn]) }
         selection = []
@@ -97,13 +110,30 @@ struct ListScreen: View {
     }
 
     private func run(_ action: ScreenAction) async {
+        await run(action, ids: action.needsSelection ? Array(selection) : [])
+    }
+
+    private func run(_ action: ScreenAction, ids: [String]) async {
         loading = true
-        let ids = action.needsSelection ? Array(selection) : []
         let result = await Script.run(action.command.split(separator: " ").map(String.init) + ids,
                                       dryRun: state.dryRun, lang: state.lang)
         output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
         loading = false
         await load()
+    }
+}
+
+extension ListScreen {
+    /// Sélecteur de fichiers et dossiers (plusieurs à la fois), en partant du dossier perso.
+    func choose(_ action: ScreenAction) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        guard panel.runModal() == .OK else { return }
+        let paths = panel.urls.map(\.path)
+        Task { await run(action, ids: paths) }
     }
 }
 

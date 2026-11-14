@@ -30,6 +30,10 @@ enum Screen: String, CaseIterable, Identifiable {
     case updates = "Mises à jour des apps"
     case brew = "Paquets et apps Homebrew"
     case timeMachine = "Time Machine"
+    case spotlight = "Index Spotlight"
+    case lipo = "Retirer la partie Intel d'une app"
+    case claude = "Claude Code"
+    case zshHistory = "Vider l'historique du terminal"
     case network = "Diagnostic et tests réseau"
     case settings = "Réglages de core-eraser"
 
@@ -45,6 +49,10 @@ enum Screen: String, CaseIterable, Identifiable {
         case .updates: return "arrow.down.circle"
         case .brew: return "mug"
         case .timeMachine: return "clock.arrow.circlepath"
+        case .spotlight: return "magnifyingglass"
+        case .lipo: return "cpu"
+        case .claude: return "bubble.left.and.bubble.right"
+        case .zshHistory: return "terminal"
         case .network: return "network"
         case .settings: return "gearshape"
         }
@@ -74,6 +82,10 @@ struct ContentView: View {
                 case .updates: UpdatesView()
                 case .brew: BrewView()
                 case .timeMachine: TimeMachineView()
+                case .spotlight: SpotlightView()
+                case .lipo: LipoView()
+                case .claude: ClaudeView()
+                case .zshHistory: ZshHistoryView()
                 case .network: NetworkView()
                 case .settings: SettingsView()
                 }
