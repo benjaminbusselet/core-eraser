@@ -5,7 +5,7 @@ A lightweight, readable alternative to the cleaning parts of apps like Pearclean
 
 [Version française](README.fr.md)
 
-> Status: **0.3.0**, script and app (beta). Tested on macOS 27.2.1 (Apple Silicon). Use `--dry-run` first.
+> Status: **0.4.0**, script and app (beta). Tested on macOS 27.2.1 (Apple Silicon). Use `--dry-run` first.
 
 ## What it does
 

@@ -5,7 +5,7 @@ Une alternative légère et lisible aux fonctions de nettoyage d'apps comme Pear
 
 [English version](README.md)
 
-> État : **0.3.0**, script et app (bêta). Testé sur macOS 27.2.1 (puce Apple). Commence par `--dry-run`.
+> État : **0.4.0**, script et app (bêta). Testé sur macOS 27.2.1 (puce Apple). Commence par `--dry-run`.
 
 ## Ce qu'il fait
 

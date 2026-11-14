@@ -18,9 +18,11 @@
 - [x] Known limits listed in the README (beta versions in `updates`, column alignment)
 
 ## 0.4.0
-- [ ] Real-world check: sentinel and tm-clean run by launchd through the app; downloaded zip opens after "Open Anyway"
 - [x] Universal app (Apple silicon and Intel): build both architectures, merge with lipo
 - [x] App screens for the remaining commands: lipo-app, Spotlight, Claude Code (conversations, cache), zsh history
 - [x] Time Machine screen: exclusions (list, add, remove), analysis of the largest backed-up folders, differences between backups
 - [x] Settings: add a protected item from the app (file picker)
 - [x] Script tables: align columns with accented characters (remove this known limitation)
+
+## Later
+- [ ] Real-world check: sentinel and tm-clean run by launchd through the app; downloaded zip opens after "Open Anyway"
