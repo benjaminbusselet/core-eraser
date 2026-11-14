@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - npx tools (`~/.npm/_npx`) in `dev-clean` and in the app: one line per tool (name, size, date); a tool in use is never removed.
 - App: Plug-ins and extensions screen; system extensions and items outside your home folder show what to do yourself.
 - App: Startup services, .pkg receipts, App updates, Homebrew, Time Machine, Network and Settings screens.
+- CI builds the app; a `v*` tag attaches `core-eraser-app.zip` to the release. READMEs explain how to install it.
 
 ### Changed
 

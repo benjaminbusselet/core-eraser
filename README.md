@@ -48,6 +48,13 @@ cd core-eraser
 
 Optional shortcut in `~/.zshrc`: `alias eraser='/path/to/core-eraser/core-eraser.sh'`
 
+### App (beta, Apple silicon)
+
+- Download `core-eraser-app.zip` from the [Releases](https://github.com/benjaminbusselet/core-eraser/releases) page and unzip it.
+- The app is not notarized by Apple: on first launch, macOS blocks it. Allow it in System Settings > Privacy & Security > "Open Anyway".
+- Give it **Full Disk Access** (the app shows a banner with a button when it is missing).
+- Or build it yourself (requires Xcode): `./sign-setup.sh` once, then `./build-app.sh`. With the local certificate, Full Disk Access survives rebuilds.
+
 ## Usage
 
 ```sh

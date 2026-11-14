@@ -10,7 +10,7 @@
 - [x] Sign the app with a stable identity, so Full Disk Access survives rebuilds
 - [x] Banner when Full Disk Access is missing
 - [x] Faster leftover scan (was about 23 s, now about 3 s)
-- [ ] Build the app in CI, attach it to the release, update the READMEs
+- [x] Build the app in CI, attach it to the release, update the READMEs
 
 ## Later
 - [ ] Trash monitoring (`sentinel`) through the app, which can hold Full Disk Access

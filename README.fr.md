@@ -49,6 +49,13 @@ cd core-eraser
 
 Raccourci facultatif dans `~/.zshrc` : `alias eraser='/chemin/vers/core-eraser/core-eraser.sh'`
 
+### App (bêta, Mac Apple silicon)
+
+- Télécharge `core-eraser-app.zip` sur la page [Releases](https://github.com/benjaminbusselet/core-eraser/releases) et décompresse-le.
+- L'app n'est pas notarisée par Apple : au premier lancement, macOS la bloque. Autorise-la dans Réglages Système > Confidentialité et sécurité > « Ouvrir quand même ».
+- Donne-lui l'**accès complet au disque** (l'app affiche un bandeau avec un bouton s'il manque).
+- Ou construis-la toi-même (Xcode requis) : `./sign-setup.sh` une fois, puis `./build-app.sh`. Avec le certificat local, l'accès complet au disque survit aux recompilations.
+
 ## Utilisation
 
 ```sh

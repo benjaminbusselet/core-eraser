@@ -16,3 +16,29 @@ jobs:
         run: shellcheck -s bash core-eraser.sh tests/run-tests.sh
       - name: Tests
         run: tests/run-tests.sh
+
+  # Construit l'app ; sur un tag v*, la joint à la release (créée si besoin)
+  app:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: ./build-app.sh
+      - name: Zip
+        run: ditto -c -k --keepParent build/core-eraser.app core-eraser-app.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-eraser-app
+          path: core-eraser-app.zip
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" core-eraser-app.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" core-eraser-app.zip --generate-notes
+          fi
