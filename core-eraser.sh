@@ -639,7 +639,12 @@ app_keys() {
 
 # Clé (en minuscules) d'une entrée de ~/Library : sans extension, préfixe d'éditeur ni "group."
 entry_key() {
-    echo "$1" | sed -E 's/\.(plist|savedState|binarycookies)$//; s/^[A-Z0-9]{10}\.//; s/^(systemgroup|groups?)\.//' | tr '[:upper:]' '[:lower:]'
+    echo "$1" | entry_keys
+}
+
+# Même calcul pour une liste de noms (un par ligne) : un seul passage au lieu d'un processus par nom
+entry_keys() {
+    sed -E 's/\.(plist|savedState|binarycookies)$//; s/^[A-Z0-9]{10}\.//; s/^(systemgroup|groups?)\.//' | tr '[:upper:]' '[:lower:]'
 }
 
 # 0 si la clé correspond à une ligne de la liste (identique, variante "ligne.suffixe", ou nom d'app)
@@ -655,13 +660,18 @@ key_matches() {
 
 # Identifiants, noms et groupes partagés de toutes les apps installées
 installed_apps() {
-    local d app id
+    local d app id n=0
     {
+    # Huit apps à la fois : codesign et plutil sont lents, l'ordre des lignes est sans importance (tri final)
     for d in $APP_DIRS; do
         for app in "$d"/*.app; do
-            [ -d "$app" ] && app_keys "$app"
+            [ -d "$app" ] || continue
+            app_keys "$app" &
+            n=$((n + 1))
+            [ $((n % 8)) -eq 0 ] && wait
         done
     done
+    wait
     # Apps auxiliaires installées dans Application Support (ex : GoogleUpdater de Chrome)
     find "$HOME/Library/Application Support" "/Library/Application Support" -maxdepth 6 -name '*.app' -type d -prune 2>/dev/null \
         | while IFS= read -r app; do
@@ -704,16 +714,25 @@ is_macos_item() {
 
 # Affiche une ligne par reste : taille en Ko, dossier, nom, chemin (séparés par une tabulation)
 orphans_scan() {
-    local dir entry base key kb label check
+    local dir entry base key kb label check entries i
     load_apps
     SYSTEM_INDEX=$(system_index)
     for dir in "${LIB_DIRS[@]}"; do
         [ -d "$HOME/Library/$dir" ] || continue
+        # Clés de tous les éléments du dossier en un seul passage (noms contenant un retour à la ligne : ignorés)
+        entries=()
         while IFS= read -r -d '' entry; do
-            is_excluded "$entry" && continue
-            base=$(basename "$entry")
-            key=$(entry_key "$base")
+            case "$entry" in *$'\n'*) continue ;; esac
+            entries+=("$entry")
+        done < <(find "$HOME/Library/$dir" -mindepth 1 -maxdepth 1 -print0)
+        [ "${#entries[@]}" -gt 0 ] || continue
+        i=-1
+        while IFS= read -r key; do
+            i=$((i + 1))
+            entry=${entries[$i]}
             case "$key" in ""|.*|com.apple.*) continue ;; esac
+            is_excluded "$entry" && continue
+            base=${entry##*/}
             label="$base"
             check=0
             # Identifiant (a.b.c) : vérifié partout. Simple nom de dossier : seulement dans Application Support.
@@ -731,7 +750,7 @@ orphans_scan() {
             else
                 printf '%s\t%s\t%s\t%s\n' "${kb:-0}" "$dir" "$label" "$entry"
             fi
-        done < <(find "$HOME/Library/$dir" -mindepth 1 -maxdepth 1 -print0)
+        done < <(printf '%s\n' "${entries[@]##*/}" | entry_keys)
     done
 }
 

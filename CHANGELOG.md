@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Faster search of app-related files and caches (one pass instead of one process per file).
+- Faster leftover scan: about 3 s instead of 21 s (keys computed in one pass, installed apps read eight at a time).
 
 ### Fixed
 

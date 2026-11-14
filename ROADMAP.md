@@ -9,7 +9,7 @@
 - [x] npx tools (`~/.npm/_npx`) as a separate developer cache: one line per tool (name, size, date), never remove a tool in use
 - [x] Sign the app with a stable identity, so Full Disk Access survives rebuilds
 - [x] Banner when Full Disk Access is missing
-- [ ] Faster leftover scan (still about 23 s)
+- [x] Faster leftover scan (was about 23 s, now about 3 s)
 - [ ] Build the app in CI, attach it to the release, update the READMEs
 
 ## Later
