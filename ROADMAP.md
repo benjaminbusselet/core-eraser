@@ -12,7 +12,7 @@
 - [x] Faster leftover scan (was about 23 s, now about 3 s)
 - [x] Build the app in CI, attach it to the release, update the READMEs
 
-## Later
+## 0.3.0
 - [x] Trash monitoring (`sentinel`) through the app, which can hold Full Disk Access
 - [x] Optional cleanup when the Time Machine disk is plugged in
 - [x] Known limits listed in the README (beta versions in `updates`, column alignment)
