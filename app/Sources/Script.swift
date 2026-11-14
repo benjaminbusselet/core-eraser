@@ -63,7 +63,7 @@ final class AppState: ObservableObject {
         "Analyse en cours...", "(à vérifier)",
         "Désinstaller une app et ses fichiers", "Choisis une app dans la liste.", "Tout cocher", "Tout décocher",
         "Sélection :", "Mettre les éléments cochés à la Corbeille ?", "L'app est ouverte : elle sera fermée avant.",
-        "Élément", "Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite.", "Clique sur Analyser pour chercher les restes.",
+        "Élément", "Détail", "Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite.", "Clique sur Analyser pour chercher les restes.",
         "Mettre la sélection à la Corbeille ?", "Exécuter les opérations cochées ?", "Annuler",
         "Commandes à lancer toi-même dans Terminal (droits administrateur) :",
     ]

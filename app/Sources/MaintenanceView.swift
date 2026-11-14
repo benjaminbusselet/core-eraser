@@ -1,4 +1,4 @@
-// Maintenance : interrupteurs, bouton Exécuter, et commandes sudo à copier.
+// Maintenance : interrupteurs par catégorie, détail à cocher par élément, et commandes sudo à copier.
 import SwiftUI
 import AppKit
 
@@ -9,6 +9,8 @@ struct MaintenanceTask: Identifiable {
     let label: String
     let kb: Int
     var isOn: Bool
+    var expanded = false
+    var items: [AppItem]?    // détail chargé à la demande ; nil tant qu'il n'a pas été ouvert
     var id: String { "\(kind)-\(key)" }
 }
 
@@ -36,10 +38,23 @@ struct MaintenanceView: View {
                             HStack {
                                 Text(task.label)
                                 Spacer()
-                                Text(formatKB(task.kb)).monospacedDigit().foregroundStyle(.secondary)
+                                Text(formatKB(selectedKB(task))).monospacedDigit().foregroundStyle(.secondary)
                             }
                         }
                         .toggleStyle(.switch)
+                        // Le détail par élément n'existe que pour les caches et journaux du dossier perso
+                        if task.kind == .user {
+                            DisclosureGroup(state.t("Détail"), isExpanded: $task.expanded) {
+                                if let items = task.items {
+                                    ItemChecklist(items: Binding(get: { items }, set: { task.items = $0 }))
+                                } else {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
+                            .onChange(of: task.expanded) { open in
+                                if open && task.items == nil { Task { await loadItems(task.id) } }
+                            }
+                        }
                     }
                 }
                 Section(state.t("Commandes à lancer toi-même dans Terminal (droits administrateur) :")) {
@@ -82,6 +97,21 @@ struct MaintenanceView: View {
         }
     }
 
+    /// Taille retenue : celle des éléments cochés si le détail est ouvert, sinon celle de la catégorie.
+    private func selectedKB(_ task: MaintenanceTask) -> Int {
+        guard let items = task.items else { return task.kb }
+        return items.filter(\.checked).reduce(0) { $0 + $1.kb }
+    }
+
+    private func loadItems(_ id: String) async {
+        guard let task = tasks.first(where: { $0.id == id }) else { return }
+        let result = await Script.run(["list", "user-clean-items", task.key], lang: state.lang)
+        let items = result.rows.compactMap { row in
+            row.count == 2 ? AppItem(path: row[1], kb: Int(row[0]) ?? 0, checked: true) : nil
+        }
+        if let index = tasks.firstIndex(where: { $0.id == id }) { tasks[index].items = items }
+    }
+
     private func reload() async {
         loading = true
         let lang = state.lang
@@ -106,17 +136,62 @@ struct MaintenanceView: View {
     private func run() async {
         loading = true
         var lines: [String] = []
-        let user = tasks.filter { $0.isOn && $0.kind == .user }.map(\.key)
-        let dev = tasks.filter { $0.isOn && $0.kind == .dev }.map(\.key)
-        if !user.isEmpty {
-            lines.append((await Script.run(["user-clean"] + user, dryRun: state.dryRun, lang: state.lang)).output)
+        let lang = state.lang
+        let dryRun = state.dryRun
+        // Catégories dont le détail n'a pas été ouvert : vidées en entier
+        let whole = tasks.filter { $0.isOn && $0.kind == .user && $0.items == nil }.map(\.key)
+        if !whole.isEmpty {
+            lines.append((await Script.run(["user-clean"] + whole, dryRun: dryRun, lang: lang)).output)
         }
+        // Catégories détaillées : seulement les éléments cochés
+        let picked = tasks.filter { $0.isOn && $0.kind == .user }
+            .flatMap { ($0.items ?? []).filter(\.checked).map(\.path) }
+        if !picked.isEmpty {
+            lines.append((await Script.run(["clear"] + picked, dryRun: dryRun, lang: lang)).output)
+        }
+        let dev = tasks.filter { $0.isOn && $0.kind == .dev }.map(\.key)
         if !dev.isEmpty {
-            lines.append((await Script.run(["dev-clean"] + dev, dryRun: state.dryRun, lang: state.lang)).output)
+            lines.append((await Script.run(["dev-clean"] + dev, dryRun: dryRun, lang: lang)).output)
         }
         await reload()
         let text = lines.joined().trimmingCharacters(in: .whitespacesAndNewlines)
         output = text.isEmpty ? "OK" : text
         loading = false
+    }
+}
+
+/// Liste d'éléments à cocher, avec « tout cocher / tout décocher » ; défile au-delà d'une certaine hauteur.
+struct ItemChecklist: View {
+    @EnvironmentObject private var state: AppState
+    @Binding var items: [AppItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button(state.t("Tout cocher")) { setAll(true) }
+                Button(state.t("Tout décocher")) { setAll(false) }
+            }
+            .controlSize(.small)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach($items) { $item in
+                        Toggle(isOn: $item.checked) {
+                            HStack {
+                                Text(item.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                                    .lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Text(formatKB(item.kb)).monospacedDigit().foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+            }
+            .frame(maxHeight: 220)
+        }
+    }
+
+    private func setAll(_ value: Bool) {
+        for index in items.indices { items[index].checked = value }
     }
 }

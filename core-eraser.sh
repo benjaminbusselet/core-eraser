@@ -2157,7 +2157,7 @@ maintenance_run() {
 # --- mode api : piloté par l'app, sans aucune question ----------------------
 # Sorties en colonnes séparées par des tabulations. Code de retour 2 : demande inconnue.
 #   api list orphans|plugins|services|pkgs|apps|dev-caches|user-clean|system-clean|excludes|tm-backups
-#   api list app-files <app>
+#   api list app-files <app>         api list user-clean-items <0|1|2>   api clear <cache ou journal>...
 #   api text tm-status|network-diag
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>
 #   api user-clean <0|1|2>...        api dev-clean <nom>...       api version | lang
@@ -2194,6 +2194,12 @@ api_list() {
             for i in 0 1 2; do
                 printf '%s\t%s\t%s\n' "$i" "$(printf '%s\n' "${UC_LISTS[$i]}" | sum_kb)" "${UC_LABELS[$i]}"
             done ;;
+        user-clean-items)
+            case "${2:-}" in 0|1|2) ;; *) return 2 ;; esac
+            user_clean_build
+            printf '%s\n' "${UC_LISTS[$2]}" | while IFS= read -r p; do
+                [ -n "$p" ] && printf '%s\t%s\n' "$(du -sk "$p" 2>/dev/null | cut -f1)" "$p"
+            done | sort -rn ;;
         system-clean)
             system_clean_cmds
             i=0
@@ -2231,6 +2237,16 @@ api_run() {
             user_clean_build
             for p in "$@"; do
                 case "$p" in 0|1|2) user_clean_apply "$p" ;; *) rc=2 ;; esac
+            done
+            return "$rc" ;;
+        clear)
+            # Vide des caches ou journaux précis ; tout autre chemin est refusé
+            for p in "$@"; do
+                case "$p" in
+                    "$HOME/Library/Caches/"?*|"$HOME/Library/Logs/"?*|"$HOME/Library/Containers/"?*/Data/Library/Caches) ;;
+                    *) rc=2; continue ;;
+                esac
+                if [ "$DRY_RUN" -eq 1 ]; then msg "[simulation] %s : cache vidé" "$p"; else clear_path "$p" || rc=1; fi
             done
             return "$rc" ;;
         dev-clean)
@@ -2401,6 +2417,7 @@ Option	Option
   --dry-run <cmd>   : simulation, rien n'est modifié	  --dry-run <cmd>   : simulation, nothing is changed
   --version         : version de core-eraser	  --version         : core-eraser version
 oui	yes
+Détail	Details
 Éléments de %s :	Items of %s:
 Choisis une app dans la liste.	Choose an app in the list.
 Tout cocher	Check all

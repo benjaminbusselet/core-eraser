@@ -154,6 +154,12 @@ run --dry-run api trash "$T/Library/Preferences/com.test.coreeraser.leftover.pli
 check "simulation : rien n'est déplacé" test -e "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
 api trash "$T/Library/Preferences/com.test.coreeraser.leftover.plist" >/dev/null
 check "exclude-remove puis trash : à la Corbeille" test -e "$T/.Trash/com.test.coreeraser.leftover.plist"
+mkdir -p "$T/Library/Logs/one.log.d" "$T/Library/Logs/two.log.d"
+check "list user-clean-items : un journal par ligne" test "$(api list user-clean-items 2 | grep -c 'Library/Logs/')" = 2
+api clear "$T/Library/Logs/one.log.d" >/dev/null
+check "clear : l'élément visé est vidé, pas son voisin" test ! -e "$T/Library/Logs/one.log.d" -a -e "$T/Library/Logs/two.log.d"
+api clear "$T/Library/Preferences" >/dev/null; rc=$?
+check "clear hors caches et journaux : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
 api list inconnu >/dev/null; rc=$?
 check "demande inconnue : code 2" test "$rc" -eq 2
 check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"
