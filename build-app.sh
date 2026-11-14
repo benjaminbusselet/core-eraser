@@ -28,7 +28,14 @@ plutil -insert CFBundleVersion -string "$VERSION" "$PLIST"
 plutil -insert LSMinimumSystemVersion -string "13.0" "$PLIST"
 plutil -insert NSHighResolutionCapable -bool true "$PLIST"
 
-# Signature locale (sans compte développeur Apple)
-codesign --force --sign - "$APP"
+# Signature avec le certificat local stable (créé par sign-setup.sh), sinon signature ad hoc
+IDENTITY="core-eraser local signing"
+if security find-certificate -c "$IDENTITY" >/dev/null 2>&1; then
+    codesign --force --sign "$IDENTITY" --identifier "$ID" "$APP"
+else
+    echo "Warning: no '$IDENTITY' certificate, ad hoc signature." >&2
+    echo "Full Disk Access will be lost at each build. Run ./sign-setup.sh once." >&2
+    codesign --force --sign - "$APP"
+fi
 codesign --verify --strict "$APP"
 echo "Built $APP ($VERSION)"

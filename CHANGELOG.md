@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - App: Uninstall screen, removing an app and its leftovers together, with a checkbox per item.
 - Script: `app-uninstall`, `user-clean` and `dev-clean` let you check items one by one; long lists scroll.
+- `sign-setup.sh`: creates a local signing certificate once, so the app keeps Full Disk Access after each rebuild.
 
 ### Changed
 
