@@ -14,7 +14,7 @@
 #   lipo-app          : retire la partie Intel d'une app (sauvegarde, signature locale, avertissement)
 # Nettoyage
 #   user-clean        : caches des navigateurs, caches et journaux de ton dossier perso
-#   dev-clean         : caches des outils de développement installés (npm, pip, Homebrew, Xcode)
+#   dev-clean         : caches des outils de développement installés (npm, pip, Homebrew, Xcode), outils npx
 #   system-clean      : caches et journaux système (tailles), commandes sudo pour les vider
 # Stockage et sauvegarde
 #   timemachine       : état, exclusions, analyse, sauvegarde, place de chaque sauvegarde, différences
@@ -950,8 +950,52 @@ dev_clean_all() {
     done < <(dev_caches)
 }
 
+# --- outils npx ---------------------------------------------------------------
+
+# Dossier des outils téléchargés par npx, dans le cache npm
+npx_dir() {
+    local c=""
+    command -v npm >/dev/null && c=$(npm config ls -l 2>/dev/null | sed -n 's/^cache = "\(.*\)"$/\1/p')
+    printf '%s/_npx\n' "${c:-$HOME/.npm}"
+}
+
+# Une ligne par outil : Ko, nom, date (AAAA-MM-JJ), en cours d'utilisation (0|1), dossier
+npx_tools() {
+    local dir d name used
+    dir=$(npx_dir)
+    [ -d "$dir" ] || return 0
+    for d in "$dir"/*/; do
+        [ -d "$d" ] || continue
+        d=${d%/}
+        # Paquets demandés à npx : liste « packages » de son package.json
+        name=$(sed -n '/"packages"/,/]/ s/^ *"\(.*\)",\{0,1\}$/\1/p' "$d/package.json" 2>/dev/null | paste -sd ' ' -)
+        used=0
+        pgrep -f "$d/" >/dev/null 2>&1 && used=1
+        printf '%s\t%s\t%s\t%s\t%s\n' "$(du -sk "$d" | cut -f1)" "${name:-?}" \
+            "$(stat -f %Sm -t %Y-%m-%d "$d")" "$used" "$d"
+    done
+}
+
+# Supprime un outil npx ($1 = son dossier) ; tout autre chemin est refusé, un outil en cours d'utilisation est gardé
+npx_remove() {
+    local dir
+    dir=$(npx_dir)
+    case "$1" in "$dir"/?*) ;; *) return 2 ;; esac
+    case "${1#"$dir"/}" in */*|.|..) return 2 ;; esac
+    [ -d "$1" ] || return 2
+    if pgrep -f "$1/" >/dev/null 2>&1; then
+        msg "  %s : en cours d'utilisation, gardé" "$1"
+        return 1
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        msg "[simulation] %s : supprimé" "$1"
+        return 0
+    fi
+    rm -rf "$1" && count=$((count + 1)) && msg "  %s : supprimé" "$1"
+}
+
 dev_clean_run() {
-    local names=() paths=() name path n=0 i any=0
+    local names=() paths=() name path n=0 i any=0 kb date used busy=0
     CL_LABELS=()
     CL_DEFAULTS=()
     while IFS=$'\t' read -r name path; do
@@ -962,6 +1006,16 @@ dev_clean_run() {
         CL_LABELS+=("$(printf '%9s  %-9s  %s' "$(human_size "$path")" "$name" "$path")")
         CL_DEFAULTS+=(0)
     done < <(dev_caches)
+    # Un outil npx par ligne ; ceux en cours d'utilisation ne sont pas proposés
+    while IFS=$'\t' read -r kb name date used path; do
+        if [ "$used" -eq 1 ]; then busy=$((busy + 1)); continue; fi
+        n=$((n + 1))
+        names+=("npx $name")
+        paths+=("$path")
+        CL_LABELS+=("$(printf '%9s  %-9s  %s  (%s)' "$(fmt_kb "$kb")" "npx" "$name" "$date")")
+        CL_DEFAULTS+=(0)
+    done < <(npx_tools)
+    [ "$busy" -eq 0 ] || msg "(%s outil(s) npx en cours d'utilisation : non proposé(s))" "$busy"
     [ "$n" -gt 0 ] || { msg "Aucun cache trouvé."; return 0; }
     msg "(Homebrew retire aussi les anciennes versions des paquets installés)"
     # Une case par outil, rien de coché au départ
@@ -973,7 +1027,11 @@ dev_clean_run() {
     [ "$any" -eq 1 ] || { msg "Rien vidé."; return 0; }
     confirm
     for i in "${!names[@]}"; do
-        [ "${CL_STATES[$i]}" -eq 1 ] && dev_clean_item "${names[$i]}" "${paths[$i]}"
+        [ "${CL_STATES[$i]}" -eq 1 ] || continue
+        case "${names[$i]}" in
+            npx\ *) npx_remove "${paths[$i]}" ;;
+            *) dev_clean_item "${names[$i]}" "${paths[$i]}" ;;
+        esac
     done
 }
 
@@ -2156,11 +2214,11 @@ maintenance_run() {
 
 # --- mode api : piloté par l'app, sans aucune question ----------------------
 # Sorties en colonnes séparées par des tabulations. Code de retour 2 : demande inconnue.
-#   api list orphans|plugins|services|pkgs|apps|dev-caches|user-clean|system-clean|excludes|tm-backups
+#   api list orphans|plugins|services|pkgs|apps|dev-caches|npx-tools|user-clean|system-clean|excludes|tm-backups
 #   api list app-files <app>         api list user-clean-items <0|1|2>   api clear <cache ou journal>...
 #   api text tm-status|network-diag
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>
-#   api user-clean <0|1|2>...        api dev-clean <nom>...       api version | lang
+#   api user-clean <0|1|2>...        api dev-clean <nom>...       api npx-remove <dossier>...   api version | lang
 #   api quit <app>...                ferme des apps (comme Cmd+Q)      api cask <app>   nom du cask Homebrew
 #   api tr <texte>...                traduit les textes de l'app (une ligne par texte)
 
@@ -2189,6 +2247,7 @@ api_list() {
                 [ -n "$path" ] && [ -d "$path" ] || continue
                 printf '%s\t%s\t%s\n' "$(du -sk "$path" 2>/dev/null | cut -f1)" "$name" "$path"
             done ;;
+        npx-tools) npx_tools ;;
         user-clean)
             user_clean_build
             for i in 0 1 2; do
@@ -2253,6 +2312,11 @@ api_run() {
             for p in "$@"; do
                 path=$(dev_caches | awk -F'\t' -v n="$p" '$1 == n { print $2 }')
                 if [ -n "$path" ] && [ -d "$path" ]; then dev_clean_item "$p" "$path"; else rc=2; fi
+            done
+            return "$rc" ;;
+        npx-remove)
+            for p in "$@"; do
+                npx_remove "$p" || rc=$?
             done
             return "$rc" ;;
         quit) quit_apps "$@" ;;
@@ -2395,7 +2459,7 @@ Applications	Applications
   lipo-app          : retire la partie Intel d'une app (sauvegarde, signature locale, avertissement)	  lipo-app          : strip the Intel part of an app (backup, local signature, warning)
 Nettoyage	Cleanup
   user-clean        : caches des navigateurs, caches et journaux de ton dossier perso	  user-clean        : browser caches, caches and logs in your home folder
-  dev-clean         : caches des outils de développement installés (npm, pip, Homebrew, Xcode)	  dev-clean         : caches of installed developer tools (npm, pip, Homebrew, Xcode)
+  dev-clean         : caches des outils de développement installés (npm, pip, Homebrew, Xcode), outils npx	  dev-clean         : caches of installed developer tools (npm, pip, Homebrew, Xcode), npx tools
   system-clean      : caches et journaux système (tailles), commandes sudo pour les vider	  system-clean      : system caches and logs (sizes), sudo commands to empty them
 Stockage et sauvegarde	Storage and backup
   timemachine       : état, exclusions, analyse, sauvegarde, place de chaque sauvegarde, différences	  timemachine       : status, exclusions, analysis, backup, size of each backup, differences
@@ -2441,6 +2505,11 @@ Exécuter les opérations cochées ?	Run the checked tasks?
 Commandes à lancer toi-même dans Terminal (droits administrateur) :	Commands to run yourself in Terminal (administrator rights):
 L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés.	Full Disk Access is missing: the Trash and app containers cannot be scanned.
 Ouvrir les réglages	Open Settings
+  %s : en cours d'utilisation, gardé	  %s: in use, kept
+[simulation] %s : supprimé	[simulation] %s: deleted
+  %s : supprimé	  %s: deleted
+(%s outil(s) npx en cours d'utilisation : non proposé(s))	(%s npx tool(s) in use: not offered)
+en cours d'utilisation	in use
 Annuler	Cancel
 Confirmer ? (oui/non) 	Confirm? (yes/no) 
 Annulé.	Cancelled.

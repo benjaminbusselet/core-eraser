@@ -3,14 +3,15 @@ import SwiftUI
 import AppKit
 
 struct MaintenanceTask: Identifiable {
-    enum Kind { case user, dev }
+    enum Kind { case user, dev, npx }
     let kind: Kind
-    let key: String      // indice (user-clean) ou nom de l'outil (dev-clean)
+    let key: String      // indice (user-clean), nom de l'outil (dev-clean) ou dossier (outil npx)
     let label: String
     let kb: Int
     var isOn: Bool
     var expanded = false
     var items: [AppItem]?    // détail chargé à la demande ; nil tant qu'il n'a pas été ouvert
+    var busy = false         // outil npx en cours d'utilisation : impossible à cocher
     var id: String { "\(kind)-\(key)" }
 }
 
@@ -36,12 +37,13 @@ struct MaintenanceView: View {
                     ForEach($tasks) { $task in
                         Toggle(isOn: $task.isOn) {
                             HStack {
-                                Text(task.label)
+                                Text(task.busy ? "\(task.label)  (\(state.t("en cours d'utilisation")))" : task.label)
                                 Spacer()
                                 Text(formatKB(selectedKB(task))).monospacedDigit().foregroundStyle(.secondary)
                             }
                         }
                         .toggleStyle(.switch)
+                        .disabled(task.busy)
                         // Le détail par élément n'existe que pour les caches et journaux du dossier perso
                         if task.kind == .user {
                             DisclosureGroup(state.t("Détail"), isExpanded: $task.expanded) {
@@ -117,6 +119,7 @@ struct MaintenanceView: View {
         let lang = state.lang
         async let user = Script.run(["list", "user-clean"], lang: lang)
         async let dev = Script.run(["list", "dev-caches"], lang: lang)
+        async let npx = Script.run(["list", "npx-tools"], lang: lang)
         // Chaque partie s'affiche dès qu'elle est prête, la plus rapide d'abord
         sudoCommands = (await Script.run(["list", "system-clean"], lang: lang)).rows.compactMap { row in
             row.count == 4 ? SudoCommand(label: row[2], kb: Int(row[1]) ?? 0, command: row[3]) : nil
@@ -129,7 +132,11 @@ struct MaintenanceView: View {
         let userTasks = (await user).rows.filter { $0.count == 3 }.map { row in
             MaintenanceTask(kind: .user, key: row[0], label: row[2], kb: Int(row[1]) ?? 0, isOn: row[0] != "1")
         }
-        tasks = userTasks + devTasks
+        let npxTasks = (await npx).rows.filter { $0.count == 5 }.map { row in
+            MaintenanceTask(kind: .npx, key: row[4], label: "npx · \(row[1]) · \(row[2])",
+                            kb: Int(row[0]) ?? 0, isOn: false, busy: row[3] == "1")
+        }
+        tasks = userTasks + devTasks + npxTasks
         loading = false
     }
 
@@ -152,6 +159,10 @@ struct MaintenanceView: View {
         let dev = tasks.filter { $0.isOn && $0.kind == .dev }.map(\.key)
         if !dev.isEmpty {
             lines.append((await Script.run(["dev-clean"] + dev, dryRun: dryRun, lang: lang)).output)
+        }
+        let npx = tasks.filter { $0.isOn && $0.kind == .npx && !$0.busy }.map(\.key)
+        if !npx.isEmpty {
+            lines.append((await Script.run(["npx-remove"] + npx, dryRun: dryRun, lang: lang)).output)
         }
         await reload()
         let text = lines.joined().trimmingCharacters(in: .whitespacesAndNewlines)

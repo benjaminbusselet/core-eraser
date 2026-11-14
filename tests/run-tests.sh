@@ -160,6 +160,19 @@ api clear "$T/Library/Logs/one.log.d" >/dev/null
 check "clear : l'élément visé est vidé, pas son voisin" test ! -e "$T/Library/Logs/one.log.d" -a -e "$T/Library/Logs/two.log.d"
 api clear "$T/Library/Preferences" >/dev/null; rc=$?
 check "clear hors caches et journaux : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
+mkdir -p "$T/.npm/_npx/aaa" "$T/.npm/_npx/bbb"
+printf '{\n  "_npx": {\n    "packages": [\n      "tool-a@1.0.0"\n    ]\n  }\n}\n' > "$T/.npm/_npx/aaa/package.json"
+check "npx-tools : nom de l'outil lu" grep -q $'\ttool-a@1.0.0\t' <<< "$(api list npx-tools)"
+bash -c 'sleep 30; :' "$T/.npm/_npx/bbb/x" & busy_pid=$!
+sleep 1
+check "npx-tools : outil en cours d'utilisation repéré" grep -q $'\t1\t'"$T/.npm/_npx/bbb"'$' <<< "$(api list npx-tools)"
+api npx-remove "$T/.npm/_npx/bbb" >/dev/null
+check "npx-remove : outil en cours d'utilisation gardé" test -d "$T/.npm/_npx/bbb"
+kill "$busy_pid" 2>/dev/null
+api npx-remove "$T/.npm/_npx/aaa" >/dev/null
+check "npx-remove : outil supprimé" test ! -e "$T/.npm/_npx/aaa"
+api npx-remove "$T/Library/Preferences" >/dev/null; rc=$?
+check "npx-remove hors dossier npx : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
 api list inconnu >/dev/null; rc=$?
 check "demande inconnue : code 2" test "$rc" -eq 2
 check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"

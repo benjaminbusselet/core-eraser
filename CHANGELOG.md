@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Script: `app-uninstall`, `user-clean` and `dev-clean` let you check items one by one; long lists scroll.
 - `sign-setup.sh`: creates a local signing certificate once, so the app keeps Full Disk Access after each rebuild.
 - App: banner when Full Disk Access is missing, with a button to open the right System Settings pane.
+- npx tools (`~/.npm/_npx`) in `dev-clean` and in the app: one line per tool (name, size, date); a tool in use is never removed.
 
 ### Changed
 

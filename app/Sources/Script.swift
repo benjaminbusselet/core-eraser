@@ -69,6 +69,7 @@ final class AppState: ObservableObject {
         "Commandes à lancer toi-même dans Terminal (droits administrateur) :",
         "L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés.",
         "Ouvrir les réglages",
+        "en cours d'utilisation",
     ]
 
     /// Traduit un texte français ; sans traduction connue, le texte est gardé tel quel.
