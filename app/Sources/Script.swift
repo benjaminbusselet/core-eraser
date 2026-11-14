@@ -60,7 +60,10 @@ final class AppState: ObservableObject {
     static let keys = [
         "Maintenance", "Restes d'apps supprimées", "Analyser", "Mettre à la Corbeille", "Protéger",
         "Simulation (rien n'est modifié)", "Exécuter", "Copier", "Résultat", "Langue", "Taille", "Dossier", "Nom",
-        "Analyse en cours...", "(à vérifier)", "Clique sur Analyser pour chercher les restes.",
+        "Analyse en cours...", "(à vérifier)",
+        "Désinstaller une app et ses fichiers", "Choisis une app dans la liste.", "Tout cocher", "Tout décocher",
+        "Sélection :", "Mettre les éléments cochés à la Corbeille ?", "L'app est ouverte : elle sera fermée avant.",
+        "Élément", "Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite.", "Clique sur Analyser pour chercher les restes.",
         "Mettre la sélection à la Corbeille ?", "Exécuter les opérations cochées ?", "Annuler",
         "Commandes à lancer toi-même dans Terminal (droits administrateur) :",
     ]

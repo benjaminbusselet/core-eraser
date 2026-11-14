@@ -103,11 +103,27 @@ fake_app "CoreEraserTest" "com.test.coreeraser.app"
 mkdir -p "$T/Library/Caches/com.test.coreeraser.app"
 touch "$T/Library/Preferences/com.test.coreeraser.app.plist" "$T/Library/Preferences/com.test.other.plist"
 n=$(echo "" | run app-uninstall | awk '$2 == "CoreEraserTest" { print $1 }')
-printf '%s\nyes\n' "$n" | run app-uninstall >/dev/null
+# Cases à cocher : tout est coché ; on décoche le cache (repéré par son numéro), puis « e » valide
+list=$(printf '%s\nq\n' "$n" | run app-uninstall)
+c=$(awk '/\[x\].*Library\/Caches\/com.test.coreeraser.app$/ { print $1; exit }' <<< "$list")
+check "les éléments de l'app sont proposés en cases cochées" test "$(grep -c '\[x\]' <<< "$list")" = 3
+printf '%s\n%s\ne\nyes\n' "$n" "$c" | run app-uninstall >/dev/null
 check "l'app est à la Corbeille" test -e "$T/.Trash/CoreEraserTest.app"
 check "ses réglages sont à la Corbeille" test -e "$T/.Trash/com.test.coreeraser.app.plist"
-check "son cache est à la Corbeille" test -e "$T/.Trash/com.test.coreeraser.app"
+check "l'élément décoché (son cache) reste en place" test -d "$T/Library/Caches/com.test.coreeraser.app"
 check "le fichier d'une autre app reste en place" test -e "$T/Library/Preferences/com.test.other.plist"
+end_home
+
+echo "6b. Caches : choix par élément (user-clean)"
+new_home
+mkdir -p "$T/Library/Logs/keep.me" "$T/Library/Logs/drop.me"
+touch "$T/Library/Logs/keep.me/a.log" "$T/Library/Logs/drop.me/b.log"
+# Catégorie 3 (journaux) : on décoche keep.me, puis « e » valide
+list=$(printf '3\nq\n' | run user-clean)
+k=$(awk '/\[x\].*Logs\/keep.me$/ { print $1; exit }' <<< "$list")
+printf '3\n%s\ne\nyes\n' "$k" | run user-clean >/dev/null
+check "l'élément coché est vidé" test ! -e "$T/Library/Logs/drop.me"
+check "l'élément décoché reste" test -e "$T/Library/Logs/keep.me/a.log"
 end_home
 
 echo "7. Mac sans Claude Code"
@@ -125,7 +141,7 @@ touch "$T/Library/Preferences/com.test.coreeraser.app.plist" "$T/Library/Prefere
 api() { run api "$@" </dev/null; }
 out=$(api list orphans)
 check "list orphans : 5 colonnes, reste détecté" bash -c "awk -F'\t' '/com.test.coreeraser.leftover.plist/ && NF == 5 { f = 1 } END { exit !f }' <<< \"\$1\"" _ "$out"
-check "list apps : la fausse app est listée, fermée" grep -q "^0	$T/Applications/CoreEraserTest.app$" <<< "$(api list apps)"
+check "list apps : la fausse app est listée, fermée" grep -q "^0	[0-9]*	$T/Applications/CoreEraserTest.app$" <<< "$(api list apps)"
 check "list app-files : réglages de l'app" grep -q "com.test.coreeraser.app.plist$" <<< "$(api list app-files "$T/Applications/CoreEraserTest.app")"
 check "list user-clean : 3 lignes" test "$(api list user-clean | wc -l | tr -d ' ')" = 3
 check "list system-clean : 3 lignes avec commande sudo" test "$(api list system-clean | grep -c '	sudo find ')" = 3

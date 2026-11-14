@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `api` mode: tab-separated lists and direct actions without prompts, for the upcoming app.
 - App (work in progress): SwiftUI window with Maintenance and Leftovers screens, built by `build-app.sh` (requires Xcode).
 
+- App: Uninstall screen, removing an app and its leftovers together, with a checkbox per item.
+- Script: `app-uninstall`, `user-clean` and `dev-clean` let you check items one by one; long lists scroll.
+
 ### Changed
 
 - Faster search of app-related files and caches (one pass instead of one process per file).

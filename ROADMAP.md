@@ -2,8 +2,9 @@
 
 ## 0.2.0: the app
 - [x] Script `api` mode, SwiftUI window, Maintenance and Leftovers screens
-- [ ] Uninstall screen: remove an app and its leftovers together, with a checkbox per item
-- [ ] Checkboxes per item inside each cleanup category (browser caches, user caches, dev caches)
+- [x] Uninstall: remove an app and its leftovers together, with a checkbox per item (script and app)
+- [x] Script: checkboxes per item inside each cleanup category (browser caches, user caches, dev caches)
+- [ ] App: the same per-item checkboxes for caches
 - [ ] Remaining screens: plug-ins, services, packages, updates, Homebrew, Time Machine, network, settings
 - [ ] npx tools (`~/.npm/_npx`) as a separate developer cache: one line per tool (name, size, date), never remove a tool in use
 - [ ] Sign the app with a stable identity, so Full Disk Access survives rebuilds

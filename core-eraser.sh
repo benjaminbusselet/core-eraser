@@ -117,10 +117,43 @@ one_number() {
 
 # Taille lisible à partir d'un nombre de Ko (Mo/Go, ou MB/GB en anglais avec un point décimal)
 fmt_kb() {
-    local loc="C"
-    [ "$TOOLS_LANG" = "fr" ] && loc="fr_FR.UTF-8"
-    LC_ALL="$loc" awk -v k="${1:-0}" -v g="$(t "Go")" -v m="$(t "Mo")" \
-        'BEGIN { if (k >= 1048576) printf "%.1f %s", k / 1048576, g; else printf "%.0f %s", k / 1024, m }'
+    LC_ALL="$(size_locale)" awk -v k="${1:-0}" -v g="$(t "Go")" -v m="$(t "Mo")" "$AWK_SIZE"'BEGIN { printf "%s", hsize(k) }'
+}
+
+# Fonction awk commune : taille lisible (g et m : unités traduites)
+# shellcheck disable=SC2016  # programme awk : rien ne doit être interprété par le shell
+AWK_SIZE='function hsize(k) { return (k >= 1048576) ? sprintf("%.1f %s", k / 1048576, g) : sprintf("%.0f %s", k / 1024, m) }
+'
+
+# Réglage régional des nombres : virgule décimale en français, point en anglais
+size_locale() {
+    if [ "$TOOLS_LANG" = "fr" ]; then echo "fr_FR.UTF-8"; else echo "C"; fi
+}
+
+# Cases à cocher sur une liste de chemins (un par ligne dans $1), triés par taille.
+# $2 : 1 pour tout cocher au départ, 0 sinon. Résultat dans PICKED (un chemin par ligne). Renvoie 1 si abandon.
+pick_paths() {
+    local rows p kb label i
+    PICK_PATHS=()
+    CL_LABELS=()
+    CL_DEFAULTS=()
+    PICKED=""
+    rows=$(printf '%s\n' "$1" | while IFS= read -r p; do
+               [ -n "$p" ] && printf '%s\t%s\n' "$(du -sk "$p" 2>/dev/null | cut -f1)" "$p"
+           done | sort -rn | LC_ALL="$(size_locale)" awk -F'\t' -v g="$(t "Go")" -v m="$(t "Mo")" -v home="$HOME" \
+               "$AWK_SIZE"'{ p = $2; if (index(p, home "/") == 1) p = "~" substr(p, length(home) + 1)
+                             printf "%9s  %s\t%s\n", hsize($1 + 0), p, $2 }')
+    [ -n "$rows" ] || return 1
+    while IFS=$'\t' read -r label p; do
+        CL_LABELS+=("$label")
+        CL_DEFAULTS+=("${2:-1}")
+        PICK_PATHS+=("$p")
+    done <<< "$rows"
+    checklist || return 1
+    for i in "${!PICK_PATHS[@]}"; do
+        [ "${CL_STATES[$i]}" -eq 1 ] && PICKED="$PICKED${PICK_PATHS[$i]}"$'\n'
+    done
+    return 0
 }
 
 # Taille lisible d'un chemin
@@ -792,7 +825,7 @@ app_is_running() {
 # Propose de fermer les apps ouvertes parmi celles reçues (chemins .app), comme Cmd+Q.
 # Renvoie 0 si plus aucune n'est ouverte.
 offer_quit() {
-    local app open=() still="" id answer
+    local app open=() answer
     for app in "$@"; do
         app_is_running "$app" && open+=("$app")
     done
@@ -805,7 +838,13 @@ offer_quit() {
     ask "Les fermer maintenant ? (oui/non) "
     read -r answer
     is_yes "$answer" || return 1
-    for app in "${open[@]}"; do
+    quit_apps "${open[@]}"
+}
+
+# Demande aux apps données de quitter (comme Cmd+Q) et attend. Renvoie 0 si toutes sont fermées.
+quit_apps() {
+    local app still="" id
+    for app in "$@"; do
         id=$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist" 2>/dev/null)
         # Identifiant inséré dans AppleScript : seulement lettres, chiffres, point et tiret
         [[ "$id" =~ ^[A-Za-z0-9.-]+$ ]] && osascript -e "tell application id \"$id\" to quit" >/dev/null 2>&1 &
@@ -814,7 +853,7 @@ offer_quit() {
     # Jusqu'à 15 secondes pour laisser chaque app se fermer (ou demander d'enregistrer)
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
         still=""
-        for app in "${open[@]}"; do
+        for app in "$@"; do
             app_is_running "$app" && still="$still $(basename "$app" .app)"
         done
         [ -n "$still" ] || return 0
@@ -825,7 +864,7 @@ offer_quit() {
 }
 
 app_uninstall_run() {
-    local apps=() files=() d app n=0 num keys dir entry kb total=0 token
+    local apps=() files=() d app n=0 num entry kb total=0 token
     # Apps déplaçables : les liens (ex : Safari, protégé par macOS) sont exclus
     for d in /Applications "$HOME/Applications"; do
         for app in "$d"/*.app; do
@@ -847,19 +886,24 @@ app_uninstall_run() {
     while IFS= read -r entry; do
         files+=("$entry")
     done < <(app_related_files "$app")
+    # Une case par élément (l'app et ses fichiers), tout coché au départ
+    msg "Éléments de %s :" "$(basename "$app" .app)"
+    pick_paths "$(printf '%s\n' "${files[@]}")" 1 || { msg "Rien déplacé."; return 0; }
+    [ -n "$PICKED" ] || { msg "Rien déplacé."; return 0; }
     msg "Seront mis à la Corbeille :"
-    for entry in "${files[@]}"; do
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
         kb=$(du -sk "$entry" 2>/dev/null | cut -f1)
         total=$((total + ${kb:-0}))
         printf "  %9s  %s\n" "$(fmt_kb "$kb")" "$entry"
-    done
+    done <<< "$PICKED"
     msg "  Total : %s" "$(fmt_kb "$total")"
     token=$(cask_token "$app")
     [ -n "$token" ] && msg "Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite." "$token"
     confirm
-    for entry in "${files[@]}"; do
-        trash_item "$entry"
-    done
+    while IFS= read -r entry; do
+        [ -n "$entry" ] && trash_item "$entry"
+    done <<< "$PICKED"
 }
 
 # --- caches de développement ----------------------------------------------
@@ -907,29 +951,29 @@ dev_clean_all() {
 }
 
 dev_clean_run() {
-    local names=() paths=() name path n=0 sel num i
+    local names=() paths=() name path n=0 i any=0
+    CL_LABELS=()
+    CL_DEFAULTS=()
     while IFS=$'\t' read -r name path; do
         [ -n "$path" ] && [ -d "$path" ] || continue
         n=$((n + 1))
         names+=("$name")
         paths+=("$path")
-        printf "%3d  %-9s  %9s  %s\n" "$n" "$name" "$(human_size "$path")" "$path"
+        CL_LABELS+=("$(printf '%9s  %-9s  %s' "$(human_size "$path")" "$name" "$path")")
+        CL_DEFAULTS+=(0)
     done < <(dev_caches)
     [ "$n" -gt 0 ] || { msg "Aucun cache trouvé."; return 0; }
     msg "(Homebrew retire aussi les anciennes versions des paquets installés)"
-    ask "Numéros à vider (ex : 1 3, vide = rien) : "
-    read -r sel
-    sel=${sel//,/ }
-    [ -n "$sel" ] || { msg "Rien vidé."; return 0; }
-    check_numbers "$sel" "$n"
+    # Une case par outil, rien de coché au départ
+    checklist || { msg "Rien vidé."; return 0; }
     msg "Seront vidés :"
-    for num in $sel; do
-        echo "  - ${names[$((10#$num - 1))]}"
+    for i in "${!names[@]}"; do
+        [ "${CL_STATES[$i]}" -eq 1 ] && { echo "  - ${names[$i]}"; any=1; }
     done
+    [ "$any" -eq 1 ] || { msg "Rien vidé."; return 0; }
     confirm
-    for num in $sel; do
-        i=$((10#$num - 1))
-        dev_clean_item "${names[$i]}" "${paths[$i]}"
+    for i in "${!names[@]}"; do
+        [ "${CL_STATES[$i]}" -eq 1 ] && dev_clean_item "${names[$i]}" "${paths[$i]}"
     done
 }
 
@@ -1491,9 +1535,17 @@ user_clean_run() {
     sel=${sel//,/ }
     [ -n "$sel" ] || { msg "Rien vidé."; return 0; }
     check_numbers "$sel" 3
+    # Une case par élément dans chaque catégorie choisie, tout coché au départ
+    for num in $sel; do
+        i=$((10#$num - 1))
+        [ -n "${UC_LISTS[$i]}" ] || continue
+        msg "%s :" "${UC_LABELS[$i]}"
+        if pick_paths "${UC_LISTS[$i]}" 1; then UC_LISTS[i]="$PICKED"; else UC_LISTS[i]=""; fi
+    done
     msg "Seront vidés :"
     for num in $sel; do
-        echo "  - ${UC_LABELS[$((10#$num - 1))]}"
+        i=$((10#$num - 1))
+        printf "  - %s : %s\n" "${UC_LABELS[$i]}" "$(printf '%s\n' "${UC_LISTS[$i]}" | grep -c .)"
     done
     confirm
     for num in $sel; do
@@ -1984,30 +2036,37 @@ menu_select() {
 # Dessine les cases à cocher (CL_LABELS, CL_STATES, ligne courante $cur)
 cl_draw() {
     local i box mark
-    for i in "${!CL_LABELS[@]}"; do
+    # Fenêtre de $rows lignes qui suit la ligne courante (listes plus longues que l'écran)
+    [ "$cur" -lt "$top" ] && top=$cur
+    [ "$cur" -ge $((top + rows)) ] && top=$((cur - rows + 1))
+    for ((i = top; i < top + rows; i++)); do
         if [ "${CL_STATES[$i]}" -eq 1 ]; then box="[x]"; else box="[ ]"; fi
         if [ "$i" -eq "$cur" ]; then mark=">"; else mark=" "; fi
         printf "\033[2K %s %s  %s\n" "$mark" "$box" "${CL_LABELS[$i]}"
     done
-    printf "\033[2K %s\n" "$(t "Flèches : se déplacer   Espace : cocher   d : par défaut   Entrée : exécuter   q : quitter")"
+    printf "\033[2K %s   (%d/%d)\n" "$(t "Flèches : se déplacer   Espace : cocher   a : tout   d : par défaut   Entrée : valider   q : quitter")" $((cur + 1)) "$n"
 }
 
 # Cases à cocher. Entrées : CL_LABELS, CL_DEFAULTS (0 ou 1). Sortie : CL_STATES. Renvoie 1 pour quitter.
 checklist() {
-    local key rest n=${#CL_LABELS[@]} cur=0 i
+    local key rest n=${#CL_LABELS[@]} cur=0 i top=0 rows
     CL_STATES=("${CL_DEFAULTS[@]}")
+    rows=$(( $(tput lines 2>/dev/null || echo 24) - 4 ))
+    [ "$rows" -lt 5 ] && rows=5
+    [ "$rows" -gt "$n" ] && rows=$n
     if [ ! -t 0 ]; then
         while true; do
             for i in "${!CL_LABELS[@]}"; do
                 if [ "${CL_STATES[$i]}" -eq 1 ]; then rest="[x]"; else rest="[ ]"; fi
                 printf "%3d  %s  %s\n" $((i + 1)) "$rest" "${CL_LABELS[$i]}"
             done
-            ask "Numéros à cocher/décocher, d = par défaut, e = exécuter, q = quitter : "
+            ask "Numéros à cocher/décocher, a = tout, d = par défaut, e = valider, q = quitter : "
             read -r key || return 1
             case "$key" in
                 e) return 0 ;;
                 q) return 1 ;;
                 d) CL_STATES=("${CL_DEFAULTS[@]}") ;;
+                a) cl_toggle_all ;;
                 *) check_numbers "$key" "$n"
                    for i in $key; do
                        i=$((10#$i - 1))
@@ -2028,14 +2087,26 @@ checklist() {
             $'\033[B') cur=$(( (cur + 1) % n )) ;;
             " ") CL_STATES[cur]=$((1 - CL_STATES[cur])) ;;
             d) CL_STATES=("${CL_DEFAULTS[@]}") ;;
+            a) cl_toggle_all ;;
             "") printf "\033[?25h"; return 0 ;;
             q|$'\033') printf "\033[?25h"; return 1 ;;
         esac
-        printf "\033[%dA" $((n + 1))
+        printf "\033[%dA" $((rows + 1))
         cl_draw
     done
     printf "\033[?25h"
     return 1
+}
+
+# Coche tout ; si tout est déjà coché, décoche tout
+cl_toggle_all() {
+    local i all=0
+    for i in "${!CL_STATES[@]}"; do
+        [ "${CL_STATES[$i]}" -eq 0 ] && all=1
+    done
+    for i in "${!CL_STATES[@]}"; do
+        CL_STATES[i]=$all
+    done
 }
 
 # --- écran Maintenance -----------------------------------------------------
@@ -2090,6 +2161,7 @@ maintenance_run() {
 #   api text tm-status|network-diag
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>
 #   api user-clean <0|1|2>...        api dev-clean <nom>...       api version | lang
+#   api quit <app>...                ferme des apps (comme Cmd+Q)      api cask <app>   nom du cask Homebrew
 #   api tr <texte>...                traduit les textes de l'app (une ligne par texte)
 
 api_list() {
@@ -2104,7 +2176,7 @@ api_list() {
                 for app in "$d"/*.app; do
                     [ -d "$app" ] && [ ! -L "$app" ] || continue
                     if app_is_running "$app"; then i=1; else i=0; fi
-                    printf '%s\t%s\n' "$i" "$app"
+                    printf '%s\t%s\t%s\n' "$i" "$(du -sk "$app" 2>/dev/null | cut -f1)" "$app"
                 done
             done ;;
         app-files)
@@ -2167,6 +2239,8 @@ api_run() {
                 if [ -n "$path" ] && [ -d "$path" ]; then dev_clean_item "$p" "$path"; else rc=2; fi
             done
             return "$rc" ;;
+        quit) quit_apps "$@" ;;
+        cask) cask_token "${1:-}" ;;
         version) printf '%s\n' "$VERSION" ;;
         lang) printf '%s\n' "$TOOLS_LANG" ;;
         tr)
@@ -2327,6 +2401,14 @@ Option	Option
   --dry-run <cmd>   : simulation, rien n'est modifié	  --dry-run <cmd>   : simulation, nothing is changed
   --version         : version de core-eraser	  --version         : core-eraser version
 oui	yes
+Éléments de %s :	Items of %s:
+Choisis une app dans la liste.	Choose an app in the list.
+Tout cocher	Check all
+Tout décocher	Uncheck all
+Sélection :	Selection:
+Mettre les éléments cochés à la Corbeille ?	Move the checked items to the Trash?
+L'app est ouverte : elle sera fermée avant.	The app is open: it will be quit first.
+Élément	Item
 Refusé par macOS : %s (donne l'accès complet au disque à l'app ou au Terminal, dans Réglages Système > Confidentialité et sécurité)	Refused by macOS: %s (give Full Disk Access to the app or to Terminal, in System Settings > Privacy & Security)
 Analyser	Scan
 Mettre à la Corbeille	Move to Trash
@@ -2566,8 +2648,8 @@ Plus tard	Later
 Ouvrir dans Terminal	Open in Terminal
 Flèches : se déplacer   Entrée : choisir   q : retour	Arrows: move   Enter: choose   q: back
 Numéro (vide = retour) : 	Number (empty = back): 
-Flèches : se déplacer   Espace : cocher   d : par défaut   Entrée : exécuter   q : quitter	Arrows: move   Space: check   d: defaults   Enter: run   q: quit
-Numéros à cocher/décocher, d = par défaut, e = exécuter, q = quitter : 	Numbers to check/uncheck, d = defaults, e = run, q = quit: 
+Flèches : se déplacer   Espace : cocher   a : tout   d : par défaut   Entrée : valider   q : quitter	Arrows: move   Space: check   a: all   d: defaults   Enter: confirm   q: quit
+Numéros à cocher/décocher, a = tout, d = par défaut, e = valider, q = quitter : 	Numbers to check/uncheck, a = all, d = defaults, e = confirm, q = quit: 
 Caches utilisateur (apps ouvertes exclues)	User caches (open apps excluded)
 Caches de développement (npm, pip, Homebrew)	Developer caches (npm, pip, Homebrew)
 Cache DNS (sudo)	DNS cache (sudo)

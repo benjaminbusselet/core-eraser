@@ -17,12 +17,14 @@ struct CoreEraserApp: App {
 
 enum Screen: String, CaseIterable, Identifiable {
     case maintenance = "Maintenance"
+    case uninstall = "Désinstaller une app et ses fichiers"
     case leftovers = "Restes d'apps supprimées"
 
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .maintenance: return "wrench.and.screwdriver"
+        case .uninstall: return "xmark.app"
         case .leftovers: return "trash.slash"
         }
     }
@@ -41,6 +43,7 @@ struct ContentView: View {
         } detail: {
             switch screen ?? .maintenance {
             case .maintenance: MaintenanceView()
+            case .uninstall: UninstallView()
             case .leftovers: LeftoversView()
             }
         }
