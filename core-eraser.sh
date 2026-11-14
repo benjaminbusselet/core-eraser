@@ -1182,16 +1182,20 @@ plugins_run() {
     done
     confirm
     for num in $sel; do
-        p="${paths[$((10#$num - 1))]}"
-        case "$p" in
-            *.systemextension)
-                msg "Extension système, à retirer dans Réglages Système > Général > Ouverture et extensions : %s" "$(basename "$p")" ;;
-            "$HOME"/*)
-                trash_item "$p" ;;
-            *)
-                msg "Droits administrateur requis, lance toi-même : sudo mv %s %s" "$(shq "$p")" "$(shq "$HOME/.Trash/")" ;;
-        esac
+        plugin_remove "${paths[$((10#$num - 1))]}"
     done
+}
+
+# Retire un module ($1) : Corbeille dans le dossier perso, sinon indication de ce qu'il faut faire soi-même
+plugin_remove() {
+    case "$1" in
+        *.systemextension)
+            msg "Extension système, à retirer dans Réglages Système > Général > Ouverture et extensions : %s" "$(basename "$1")" ;;
+        "$HOME"/*)
+            trash_item "$1" ;;
+        *)
+            msg "Droits administrateur requis, lance toi-même : sudo mv %s %s" "$(shq "$1")" "$(shq "$HOME/.Trash/")" ;;
+    esac
 }
 
 # --- services au démarrage -------------------------------------------------
@@ -2217,7 +2221,7 @@ maintenance_run() {
 #   api list orphans|plugins|services|pkgs|apps|dev-caches|npx-tools|user-clean|system-clean|excludes|tm-backups
 #   api list app-files <app>         api list user-clean-items <0|1|2>   api clear <cache ou journal>...
 #   api text tm-status|network-diag
-#   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>
+#   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>   api plugin-remove <chemin>...
 #   api user-clean <0|1|2>...        api dev-clean <nom>...       api npx-remove <dossier>...   api version | lang
 #   api quit <app>...                ferme des apps (comme Cmd+Q)      api cask <app>   nom du cask Homebrew
 #   api tr <texte>...                traduit les textes de l'app (une ligne par texte)
@@ -2317,6 +2321,14 @@ api_run() {
         npx-remove)
             for p in "$@"; do
                 npx_remove "$p" || rc=$?
+            done
+            return "$rc" ;;
+        plugin-remove)
+            # Seuls les modules que la liste a renvoyés sont acceptés
+            load_apps
+            known=$(plugins_scan | cut -f5)
+            for p in "$@"; do
+                if grep -qxF "$p" <<< "$known"; then plugin_remove "$p" || rc=1; else rc=2; fi
             done
             return "$rc" ;;
         quit) quit_apps "$@" ;;
@@ -2510,6 +2522,8 @@ Ouvrir les réglages	Open Settings
   %s : supprimé	  %s: deleted
 (%s outil(s) npx en cours d'utilisation : non proposé(s))	(%s npx tool(s) in use: not offered)
 en cours d'utilisation	in use
+Retirer	Remove
+Retirer la sélection ?	Remove the selection?
 Annuler	Cancel
 Confirmer ? (oui/non) 	Confirm? (yes/no) 
 Annulé.	Cancelled.

@@ -70,6 +70,7 @@ final class AppState: ObservableObject {
         "L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés.",
         "Ouvrir les réglages",
         "en cours d'utilisation",
+        "Plug-ins et extensions", "Type", "App d'origine", "Retirer", "Retirer la sélection ?",
     ]
 
     /// Traduit un texte français ; sans traduction connue, le texte est gardé tel quel.

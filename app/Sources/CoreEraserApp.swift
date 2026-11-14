@@ -19,6 +19,7 @@ enum Screen: String, CaseIterable, Identifiable {
     case maintenance = "Maintenance"
     case uninstall = "Désinstaller une app et ses fichiers"
     case leftovers = "Restes d'apps supprimées"
+    case plugins = "Plug-ins et extensions"
 
     var id: String { rawValue }
     var icon: String {
@@ -26,6 +27,7 @@ enum Screen: String, CaseIterable, Identifiable {
         case .maintenance: return "wrench.and.screwdriver"
         case .uninstall: return "xmark.app"
         case .leftovers: return "trash.slash"
+        case .plugins: return "puzzlepiece.extension"
         }
     }
 }
@@ -47,6 +49,7 @@ struct ContentView: View {
                 case .maintenance: MaintenanceView()
                 case .uninstall: UninstallView()
                 case .leftovers: LeftoversView()
+                case .plugins: PluginsView()
                 }
             }
         }

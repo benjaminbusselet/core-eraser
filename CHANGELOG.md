@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `sign-setup.sh`: creates a local signing certificate once, so the app keeps Full Disk Access after each rebuild.
 - App: banner when Full Disk Access is missing, with a button to open the right System Settings pane.
 - npx tools (`~/.npm/_npx`) in `dev-clean` and in the app: one line per tool (name, size, date); a tool in use is never removed.
+- App: Plug-ins and extensions screen; system extensions and items outside your home folder show what to do yourself.
 
 ### Changed
 

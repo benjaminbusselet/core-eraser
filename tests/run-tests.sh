@@ -173,6 +173,8 @@ api npx-remove "$T/.npm/_npx/aaa" >/dev/null
 check "npx-remove : outil supprimé" test ! -e "$T/.npm/_npx/aaa"
 api npx-remove "$T/Library/Preferences" >/dev/null; rc=$?
 check "npx-remove hors dossier npx : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
+api plugin-remove "$T/Library/Preferences" >/dev/null; rc=$?
+check "plugin-remove sur un chemin hors liste : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
 api list inconnu >/dev/null; rc=$?
 check "demande inconnue : code 2" test "$rc" -eq 2
 check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"
