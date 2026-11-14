@@ -18,7 +18,7 @@ A lightweight, readable alternative to the cleaning parts of apps like Pearclean
 | Network | `network` (diagnostics, DNS test, speed test) |
 | Claude Code | `conv-list`, `conv --all`, `claude-cache`, `all` |
 | Privacy | `zsh-history` |
-| Settings | `exclude`, `sentinel on/off`, `lang en/fr` |
+| Settings | `exclude`, `sentinel on/off`, `tm-clean on/off`, `lang en/fr` |
 
 Run `./core-eraser.sh -h` for the full list.
 
@@ -67,7 +67,8 @@ Optional shortcut in `~/.zshrc`: `alias eraser='/path/to/core-eraser/core-eraser
 ## Known limitations
 
 - Commands needing `sudo` are printed, not run, so they are not tested automatically.
-- `sentinel` (Trash monitoring) needs Full Disk Access to read the Trash; it will work fully with the upcoming app.
+- `sentinel` (Trash monitoring) and `tm-clean` need Full Disk Access: turn them on from the app (Settings), which holds it. Turned on from Terminal, they run with bash, which usually lacks it.
+- `tm-clean` runs when the disk is mounted, at the same time as the Time Machine backup: that first backup may still include the caches.
 - `updates` compares versions only for Homebrew, Sparkle and App Store apps; beta versions may be reported as outdated.
 - `lipo-app` replaces the app signature with a local one: automatic updates and permissions may be affected (a warning is shown).
 - The Claude Code commands read the internal layout of `~/.claude`, checked with Claude Code 2.1.323. Another version may change it (a warning is shown).

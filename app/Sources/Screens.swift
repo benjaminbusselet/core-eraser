@@ -72,29 +72,39 @@ struct NetworkView: View {
 struct SettingsView: View {
     @EnvironmentObject private var state: AppState
     @State private var sentinel = false
+    @State private var tmClean = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Toggle(state.t("Surveiller la Corbeille (fichiers laissés par les apps qu'on y jette)"), isOn: Binding(
                 get: { sentinel },
-                set: { value in Task { await setSentinel(value) } }))
+                set: { value in Task { await setAgent("sentinel", value) } }))
+                .toggleStyle(.switch)
+                .padding([.horizontal, .top])
+            Toggle(state.t("Vider caches des navigateurs fermés et journaux au branchement du disque Time Machine"),
+                   isOn: Binding(get: { tmClean }, set: { value in Task { await setAgent("tm-clean", value) } }))
                 .toggleStyle(.switch)
                 .padding([.horizontal, .top])
             ListScreen(title: "Réglages de core-eraser", list: ["list", "excludes"], columnCount: 1, idColumn: 0,
                        columns: [ScreenColumn(title: "Éléments protégés", index: 0)],
                        actions: [ScreenAction(title: "Retirer", command: "exclude-remove")])
         }
-        .task { await loadSentinel() }
+        .task { await loadAgents() }
     }
 
-    private func loadSentinel() async {
-        let result = await Script.run(["sentinel", "status"], lang: state.lang)
-        sentinel = result.output.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+    private func isOn(_ agent: String) async -> Bool {
+        let result = await Script.run([agent, "status"], lang: state.lang)
+        return result.output.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
     }
 
-    private func setSentinel(_ on: Bool) async {
-        _ = await Script.run(["sentinel", on ? "on" : "off"], lang: state.lang)
-        await loadSentinel()
+    private func loadAgents() async {
+        sentinel = await isOn("sentinel")
+        tmClean = await isOn("tm-clean")
+    }
+
+    private func setAgent(_ agent: String, _ on: Bool) async {
+        _ = await Script.run([agent, on ? "on" : "off"], lang: state.lang)
+        await loadAgents()
     }
 }
 

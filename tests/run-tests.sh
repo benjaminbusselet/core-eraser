@@ -187,6 +187,14 @@ api exclude-add "$T/Library/Logs" >/dev/null
 api exclude-add "$T/Library/Preferences" >/dev/null
 api exclude-remove "$T/Library/Logs" "$T/Library/Preferences" >/dev/null
 check "exclude-remove : plusieurs éléments retirés d'un coup" test -z "$(api list excludes)"
+check "tm-clean status : inactif au départ" test "$(api tm-clean status)" = 0
+# Disque Time Machine simulé et notification coupée : les journaux sont vidés, puis rien avant 20 h
+mkdir -p "$T/Library/Logs/old.log.d"
+lib 'tm_dest() { echo /Volumes/TM; }; osascript() { :; }; tm_clean_check' >/dev/null
+check "tm-clean-check : journaux vidés quand le disque est branché" test ! -e "$T/Library/Logs/old.log.d" -a -f "$T/Library/Application Support/io.github.benjaminbusselet.core-eraser/tm-clean-last"
+touch "$T/Library/Logs/new.log"
+lib 'tm_dest() { echo /Volumes/TM; }; osascript() { :; }; tm_clean_check' >/dev/null
+check "tm-clean-check : pas de second nettoyage avant 20 h" test -e "$T/Library/Logs/new.log"
 api list inconnu >/dev/null; rc=$?
 check "demande inconnue : code 2" test "$rc" -eq 2
 check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"

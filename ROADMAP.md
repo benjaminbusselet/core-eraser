@@ -13,6 +13,6 @@
 - [x] Build the app in CI, attach it to the release, update the READMEs
 
 ## Later
-- [ ] Trash monitoring (`sentinel`) through the app, which can hold Full Disk Access
-- [ ] Optional cleanup when the Time Machine disk is plugged in
-- [ ] Known limits listed in the README (beta versions in `updates`, column alignment)
+- [x] Trash monitoring (`sentinel`) through the app, which can hold Full Disk Access
+- [x] Optional cleanup when the Time Machine disk is plugged in
+- [x] Known limits listed in the README (beta versions in `updates`, column alignment)

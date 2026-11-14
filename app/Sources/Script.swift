@@ -18,18 +18,35 @@ enum Script {
         }
     }
 
+    /// Processus « bash core-eraser.sh <args> », avec le PATH de Homebrew.
+    static func process(_ args: [String], lang: String? = nil) -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [url.path] + args
+        var env = ProcessInfo.processInfo.environment
+        if let lang { env["TOOLS_LANG"] = lang }
+        // Une app ne reçoit pas le PATH du terminal : sans cela, Homebrew et npm seraient introuvables
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        process.environment = env
+        return process
+    }
+
+    /// Tâche de fond lancée par launchd (« core-eraser --run <commande> ») : le script tourne
+    /// sous l'app, qui a l'accès complet au disque. Seules ces commandes sont acceptées.
+    static func runBackground(_ arguments: [String]) -> Int32? {
+        guard let index = arguments.firstIndex(of: "--run"), index + 1 < arguments.count,
+              ["sentinel-check", "tm-clean-check"].contains(arguments[index + 1]) else { return nil }
+        let child = Script.process([arguments[index + 1]])
+        do { try child.run() } catch { return 1 }
+        child.waitUntilExit()
+        return child.terminationStatus
+    }
+
     /// Lance « core-eraser.sh [--dry-run] api <args> » sans bloquer l'interface.
     static func run(_ args: [String], dryRun: Bool = false, lang: String = "en") async -> Result {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/bash")
-                process.arguments = [url.path] + (dryRun ? ["--dry-run"] : []) + ["api"] + args
-                var env = ProcessInfo.processInfo.environment
-                env["TOOLS_LANG"] = lang
-                // Une app ne reçoit pas le PATH du terminal : sans cela, Homebrew et npm seraient introuvables
-                env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
-                process.environment = env
+                let process = Script.process((dryRun ? ["--dry-run"] : []) + ["api"] + args, lang: lang)
                 let pipe = Pipe()
                 process.standardOutput = pipe
                 process.standardError = FileHandle.nullDevice
@@ -79,6 +96,7 @@ final class AppState: ObservableObject {
         "Retirer les dépendances devenues inutiles ?", "Afficher l'état", "Lancer une sauvegarde maintenant",
         "Diagnostic", "Test DNS (apple.com)", "Test de débit (environ 20 s)", "Vider le cache DNS",
         "Surveiller la Corbeille (fichiers laissés par les apps qu'on y jette)", "Éléments protégés",
+        "Vider caches des navigateurs fermés et journaux au branchement du disque Time Machine",
     ]
 
     /// Traduit un texte français ; sans traduction connue, le texte est gardé tel quel.

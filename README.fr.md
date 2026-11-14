@@ -18,7 +18,7 @@ Une alternative légère et lisible aux fonctions de nettoyage d'apps comme Pear
 | Réseau | `network` (diagnostic, test DNS, test de débit) |
 | Claude Code | `conv-list`, `conv --all`, `claude-cache`, `all` |
 | Confidentialité | `zsh-history` |
-| Réglages | `exclude`, `sentinel on/off`, `lang en/fr` |
+| Réglages | `exclude`, `sentinel on/off`, `tm-clean on/off`, `lang en/fr` |
 
 `./core-eraser.sh -h` affiche la liste complète.
 
@@ -67,7 +67,8 @@ Raccourci facultatif dans `~/.zshrc` : `alias eraser='/chemin/vers/core-eraser/c
 ## Limites connues
 
 - Les commandes qui exigent `sudo` sont affichées, pas lancées : elles ne sont donc pas testées automatiquement.
-- `sentinel` (surveillance de la Corbeille) a besoin de l'accès complet au disque pour lire la Corbeille ; il fonctionnera pleinement avec l'app à venir.
+- `sentinel` (surveillance de la Corbeille) et `tm-clean` ont besoin de l'accès complet au disque : active-les depuis l'app (Réglages), qui le possède. Activés depuis Terminal, ils tournent avec bash, qui ne l'a en général pas.
+- `tm-clean` se lance au montage du disque, en même temps que la sauvegarde Time Machine : cette première sauvegarde peut encore contenir les caches.
 - `updates` ne compare les versions que des apps Homebrew, Sparkle et App Store ; une version bêta peut être signalée à tort comme en retard.
 - `lipo-app` remplace la signature de l'app par une signature locale : mises à jour automatiques et autorisations peuvent en souffrir (un avertissement s'affiche).
 - Les commandes Claude Code lisent l'organisation interne de `~/.claude`, vérifiée avec Claude Code 2.1.323. Une autre version peut l'avoir changée (un avertissement s'affiche).

@@ -31,6 +31,7 @@
 # Réglages de core-eraser
 #   exclude [list|add <chemin>|remove <N>] : éléments protégés, jamais signalés ni déplacés
 #   sentinel on|off   : surveille la Corbeille et signale les fichiers liés aux apps qu'on y jette
+#   tm-clean on|off   : vide caches des navigateurs fermés et journaux au branchement du disque Time Machine
 #   lang [en|fr]      : langue de core-eraser (anglais par défaut)
 # Option
 #   --dry-run <cmd>   : simulation, rien n'est modifié
@@ -451,6 +452,7 @@ info_msg() {
         updates) m="compare les versions installées aux dernières disponibles. Les apps Sparkle sont interrogées sur internet ; seules les apps Homebrew se mettent à jour d'ici." ;;
         lipo-app) m="retire la partie Intel d'une app pour gagner de la place. Un avertissement détaillé s'affiche avant le choix." ;;
         sentinel) m="surveille la Corbeille et signale les fichiers laissés par une app que tu y jettes. Ne supprime rien." ;;
+        tm-clean) m="au branchement du disque Time Machine, vide les caches des navigateurs fermés et les journaux (au plus une fois toutes les 20 h)." ;;
         spotlight) m="montre l'état de l'index Spotlight de chaque disque ; le reconstruire demande une commande sudo affichée." ;;
         user-clean) m="vide des caches et journaux de ton dossier perso. Ils se recréent ; historique, mots de passe et marque-pages ne sont pas touchés." ;;
         system-clean) m="montre la taille des caches et journaux système, et affiche les commandes sudo pour les vider. Rien n'est supprimé d'ici." ;;
@@ -2062,23 +2064,43 @@ spotlight_run() {
 SENTINEL_LABEL="$APP_ID.sentinel"
 SENTINEL_PLIST="$HOME/Library/LaunchAgents/$SENTINEL_LABEL.plist"
 
-sentinel_on() {
-    [ -f "$SENTINEL_PLIST" ] && { msg "Surveillance déjà active."; return 0; }
+# Chemin de l'app quand le script est rangé dedans, sinon rien
+app_bundle() {
+    case "$SELF" in
+        */Contents/Resources/core-eraser.sh) printf '%s\n' "${SELF%/Contents/Resources/core-eraser.sh}" ;;
+    esac
+}
+
+# Écrit et charge un service launchd ($1 fichier, $2 label, $3 commande du script, $4 déclencheur en XML).
+# Depuis l'app, launchd lance l'app elle-même : elle a l'accès complet au disque, que bash n'a pas.
+agent_on() {
+    local prog app
+    app=$(app_bundle)
+    if [ -n "$app" ]; then
+        prog="<string>$app/Contents/MacOS/core-eraser</string><string>--run</string><string>$3</string>"
+    else
+        prog="<string>$SELF</string><string>$3</string>"
+    fi
     mkdir -p "$HOME/Library/LaunchAgents"
-    cat > "$SENTINEL_PLIST" <<EOF
+    cat > "$1" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>$SENTINEL_LABEL</string>
+  <key>Label</key><string>$2</string>
   <key>ProgramArguments</key>
-  <array><string>$SELF</string><string>sentinel-check</string></array>
-  <key>WatchPaths</key>
-  <array><string>$HOME/.Trash</string></array>
+  <array>$prog</array>
+  $4
 </dict>
 </plist>
 EOF
-    launchctl bootstrap "gui/$(id -u)" "$SENTINEL_PLIST" && count=$((count + 1))
+    launchctl bootstrap "gui/$(id -u)" "$1" && count=$((count + 1))
+}
+
+sentinel_on() {
+    [ -f "$SENTINEL_PLIST" ] && { msg "Surveillance déjà active."; return 0; }
+    agent_on "$SENTINEL_PLIST" "$SENTINEL_LABEL" sentinel-check \
+        "<key>WatchPaths</key><array><string>$HOME/.Trash</string></array>"
     msg "Surveillance de la Corbeille active."
 }
 
@@ -2087,6 +2109,40 @@ sentinel_off() {
     launchctl bootout "gui/$(id -u)/$SENTINEL_LABEL" 2>/dev/null
     trash_item "$SENTINEL_PLIST"
     msg "Surveillance de la Corbeille arrêtée."
+}
+
+TMCLEAN_LABEL="$APP_ID.tm-clean"
+TMCLEAN_PLIST="$HOME/Library/LaunchAgents/$TMCLEAN_LABEL.plist"
+
+tm_clean_on() {
+    [ -f "$TMCLEAN_PLIST" ] && { msg "Nettoyage au branchement déjà actif."; return 0; }
+    agent_on "$TMCLEAN_PLIST" "$TMCLEAN_LABEL" tm-clean-check "<key>StartOnMount</key><true/>"
+    msg "Nettoyage au branchement du disque Time Machine actif."
+}
+
+tm_clean_off() {
+    [ -f "$TMCLEAN_PLIST" ] || { msg "Nettoyage au branchement déjà inactif."; return 0; }
+    launchctl bootout "gui/$(id -u)/$TMCLEAN_LABEL" 2>/dev/null
+    trash_item "$TMCLEAN_PLIST"
+    msg "Nettoyage au branchement arrêté."
+}
+
+# Lancé par launchd à chaque montage de disque : si c'est la destination Time Machine,
+# vide caches des navigateurs fermés et journaux (au plus une fois toutes les 20 h), puis notifie
+tm_clean_check() {
+    local stamp="$TOOLS_DATA/tm-clean-last" before after
+    [ -n "$(tm_dest)" ] || return 0
+    [ -f "$stamp" ] && [ -z "$(find "$stamp" -mmin +1200 2>/dev/null)" ] && return 0
+    mkdir -p "$TOOLS_DATA"
+    touch "$stamp"
+    # Mode api : aucune question, navigateurs ouverts ignorés
+    API=1
+    user_clean_build
+    before=$(printf '%s\n%s\n' "${UC_LISTS[0]}" "${UC_LISTS[2]}" | sum_kb)
+    user_clean_apply 0
+    user_clean_apply 2
+    after=$(printf '%s\n%s\n' "${UC_LISTS[0]}" "${UC_LISTS[2]}" | sum_kb)
+    osascript -e "display notification \"$(msg "Disque Time Machine branché : %s libérés." "$(fmt_kb $((before - after)))")\" with title \"core-eraser\"" >/dev/null 2>&1
 }
 
 # Lancé par launchd quand la Corbeille change : notifie, ne déplace et n'efface rien
@@ -2106,13 +2162,17 @@ sentinel_check() {
         # shellcheck disable=SC1003  # retire les guillemets et barres obliques inverses du message
         msg=$(printf '%s' "$msg" | tr -d '"\\')
         echo "$msg"
-        # Fenêtre qui reste jusqu'au clic ; le bouton ouvre « core-eraser orphans » dans Terminal
+        # Fenêtre qui reste jusqu'au clic ; le bouton ouvre l'app, ou « core-eraser orphans » dans Terminal
         b1=$(t "Plus tard")
-        b2=$(t "Ouvrir dans Terminal")
+        if [ -n "$(app_bundle)" ]; then b2=$(t "Ouvrir core-eraser"); else b2=$(t "Ouvrir dans Terminal"); fi
         if osascript -e "display dialog \"$msg\" with title \"core-eraser\" buttons {\"$b1\", \"$b2\"} default button 2 with icon caution" 2>/dev/null \
             | grep -qF "$b2"; then
-            osascript -e "tell application \"Terminal\" to do script \"$SELF orphans\"" \
-                      -e 'tell application "Terminal" to activate' >/dev/null 2>&1
+            if [ -n "$(app_bundle)" ]; then
+                open "$(app_bundle)"
+            else
+                osascript -e "tell application \"Terminal\" to do script \"$SELF orphans\"" \
+                          -e 'tell application "Terminal" to activate' >/dev/null 2>&1
+            fi
         fi
     done < <(find "$HOME/.Trash" -maxdepth 1 -name '*.app' -cmin -2 -print0 2>/dev/null)
 }
@@ -2292,7 +2352,7 @@ maintenance_run() {
 #   api list app-files <app>         api list user-clean-items <0|1|2>   api clear <cache ou journal>...
 #   api text tm-status|network-diag|dns-test [site]|dns-flush|speed-test     api tm-backup
 #   api service-remove <fichier>...  api pkg-forget <paquet>...   api brew-upgrade <app>...   api brew-uninstall <nom>...
-#   api brew-autoremove              api sentinel on|off|status
+#   api brew-autoremove              api sentinel on|off|status   api tm-clean on|off|status
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>   api plugin-remove <chemin>...
 #   api user-clean <0|1|2>...        api dev-clean <nom>...       api npx-remove <dossier>...   api version | lang
 #   api quit <app>...                ferme des apps (comme Cmd+Q)      api cask <app>   nom du cask Homebrew
@@ -2459,6 +2519,13 @@ api_run() {
                 status) if [ -f "$SENTINEL_PLIST" ]; then echo 1; else echo 0; fi ;;
                 *) return 2 ;;
             esac ;;
+        tm-clean)
+            case "${1:-}" in
+                on) tm_clean_on ;;
+                off) tm_clean_off ;;
+                status) if [ -f "$TMCLEAN_PLIST" ]; then echo 1; else echo 0; fi ;;
+                *) return 2 ;;
+            esac ;;
         plugin-remove)
             # Seuls les modules que la liste a renvoyés sont acceptés
             load_apps
@@ -2534,7 +2601,7 @@ menu() {
 
 run() {
     # Pas de message pour la vérification lancée en arrière-plan par le service sentinel
-    [ "$1" = "sentinel-check" ] || info_msg "$1"
+    case "$1" in sentinel-check|tm-clean-check) ;; *) info_msg "$1" ;; esac
     # Les commandes Claude Code exigent son dossier ; les autres fonctionnent sans
     case "$1" in
         conv-list|conv|claude-cache|all)
@@ -2566,6 +2633,13 @@ run() {
                 *) usage ;;
             esac ;;
         sentinel-check) sentinel_check ;;
+        tm-clean)
+            case "${2:-}" in
+                on) tm_clean_on ;;
+                off) tm_clean_off ;;
+                *) usage ;;
+            esac ;;
+        tm-clean-check) tm_clean_check ;;
         spotlight) spotlight_run ;;
         user-clean) user_clean_run ;;
         system-clean) system_clean_run ;;
@@ -2624,6 +2698,7 @@ Confidentialité	Privacy
 Réglages de core-eraser	core-eraser settings
   exclude [list|add <chemin>|remove <N>] : éléments protégés, jamais signalés ni déplacés	  exclude [list|add <path>|remove <N>] : protected items, never reported or moved
   sentinel on|off   : surveille la Corbeille et signale les fichiers liés aux apps qu'on y jette	  sentinel on|off   : watch the Trash and report files left by apps thrown into it
+  tm-clean on|off   : vide caches des navigateurs fermés et journaux au branchement du disque Time Machine	  tm-clean on|off   : empty closed-browser caches and logs when the Time Machine disk is plugged in
   lang [en|fr]      : langue de core-eraser (anglais par défaut)	  lang [en|fr]      : core-eraser language (English by default)
 Option	Option
   --dry-run <cmd>   : simulation, rien n'est modifié	  --dry-run <cmd>   : simulation, nothing is changed
@@ -2663,6 +2738,14 @@ Retirer la sélection ?	Remove the selection?
 aucune (disque débranché ?)	none (disk unplugged?)
 [simulation] tmutil startbackup	[simulation] tmutil startbackup
 Adresse : %s	Address: %s
+Ouvrir core-eraser	Open core-eraser
+Nettoyage au branchement déjà actif.	Cleanup on plug-in already on.
+Nettoyage au branchement du disque Time Machine actif.	Cleanup when the Time Machine disk is plugged in: on.
+Nettoyage au branchement déjà inactif.	Cleanup on plug-in already off.
+Nettoyage au branchement arrêté.	Cleanup on plug-in stopped.
+Disque Time Machine branché : %s libérés.	Time Machine disk plugged in: %s freed.
+au branchement du disque Time Machine, vide les caches des navigateurs fermés et les journaux (au plus une fois toutes les 20 h).	when the Time Machine disk is plugged in, empties closed-browser caches and logs (at most once every 20 h).
+Vider caches des navigateurs fermés et journaux au branchement du disque Time Machine	Empty closed-browser caches and logs when the Time Machine disk is plugged in
 aucun	none
 aucune	none
 Service	Service

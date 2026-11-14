@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Trash monitoring (`sentinel`) turned on from the app runs through the app, which holds Full Disk Access; its alert opens the app.
+- `tm-clean on|off` (and a switch in the app's Settings): empties closed-browser caches and logs when the Time Machine disk is plugged in, at most once every 20 h.
+
 ## [0.2.0] - 2026-11-14
 
 ### Added

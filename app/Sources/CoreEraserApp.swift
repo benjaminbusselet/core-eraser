@@ -5,6 +5,11 @@ import SwiftUI
 struct CoreEraserApp: App {
     @StateObject private var state = AppState()
 
+    init() {
+        // Lancée par launchd pour une tâche de fond : pas de fenêtre, fin dès que le script a fini
+        if let status = Script.runBackground(CommandLine.arguments) { exit(status) }
+    }
+
     var body: some Scene {
         WindowGroup("core-eraser") {
             ContentView()
