@@ -13,6 +13,7 @@ struct ScreenAction {
     let title: String
     let command: String        // commande api, suivie des identifiants des lignes sélectionnées
     var confirm: String? = nil // question posée avant d'agir
+    var needsSelection = true  // false : agit sans sélection (ex. brew autoremove)
 }
 
 struct ScreenRow: Identifiable {
@@ -48,11 +49,12 @@ struct ListScreen: View {
                     Button(state.t(action.title)) {
                         if action.confirm == nil { Task { await run(action) } } else { pending = action }
                     }
-                    .disabled(selection.isEmpty || loading)
+                    .disabled((action.needsSelection && selection.isEmpty) || loading)
                 }
             }
+            // Même retrait que les lignes de la liste
             line(columns.map { state.t($0.title) }).font(.headline).foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 16)
             List(rows, selection: $selection) { row in
                 line(columns.map { column in
                     let cell = column.index < row.cells.count ? row.cells[column.index] : ""
@@ -96,7 +98,9 @@ struct ListScreen: View {
 
     private func run(_ action: ScreenAction) async {
         loading = true
-        let result = await Script.run([action.command] + Array(selection), dryRun: state.dryRun, lang: state.lang)
+        let ids = action.needsSelection ? Array(selection) : []
+        let result = await Script.run(action.command.split(separator: " ").map(String.init) + ids,
+                                      dryRun: state.dryRun, lang: state.lang)
         output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
         loading = false
         await load()

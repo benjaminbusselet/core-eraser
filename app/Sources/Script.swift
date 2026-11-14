@@ -71,6 +71,14 @@ final class AppState: ObservableObject {
         "Ouvrir les réglages",
         "en cours d'utilisation",
         "Plug-ins et extensions", "Type", "App d'origine", "Retirer", "Retirer la sélection ?",
+        "Services au démarrage", "Traces d'installations .pkg", "Mises à jour des apps", "Paquets et apps Homebrew",
+        "Time Machine", "Diagnostic et tests réseau", "Réglages de core-eraser",
+        "Service", "Programme", "État", "Paquet", "Version", "Installé", "Fichiers", "Effacer la trace",
+        "App", "Installée", "Disponible", "Mise à jour par", "Mettre à jour avec Homebrew", "Mettre à jour la sélection ?",
+        "Désinstaller", "Désinstaller la sélection ?", "Retirer les dépendances inutiles",
+        "Retirer les dépendances devenues inutiles ?", "Afficher l'état", "Lancer une sauvegarde maintenant",
+        "Diagnostic", "Test DNS (apple.com)", "Test de débit (environ 20 s)", "Vider le cache DNS",
+        "Surveiller la Corbeille (fichiers laissés par les apps qu'on y jette)", "Éléments protégés",
     ]
 
     /// Traduit un texte français ; sans traduction connue, le texte est gardé tel quel.

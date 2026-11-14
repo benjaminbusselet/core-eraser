@@ -20,6 +20,13 @@ enum Screen: String, CaseIterable, Identifiable {
     case uninstall = "Désinstaller une app et ses fichiers"
     case leftovers = "Restes d'apps supprimées"
     case plugins = "Plug-ins et extensions"
+    case services = "Services au démarrage"
+    case packages = "Traces d'installations .pkg"
+    case updates = "Mises à jour des apps"
+    case brew = "Paquets et apps Homebrew"
+    case timeMachine = "Time Machine"
+    case network = "Diagnostic et tests réseau"
+    case settings = "Réglages de core-eraser"
 
     var id: String { rawValue }
     var icon: String {
@@ -28,6 +35,13 @@ enum Screen: String, CaseIterable, Identifiable {
         case .uninstall: return "xmark.app"
         case .leftovers: return "trash.slash"
         case .plugins: return "puzzlepiece.extension"
+        case .services: return "gearshape.2"
+        case .packages: return "shippingbox"
+        case .updates: return "arrow.down.circle"
+        case .brew: return "mug"
+        case .timeMachine: return "clock.arrow.circlepath"
+        case .network: return "network"
+        case .settings: return "gearshape"
         }
     }
 }
@@ -50,6 +64,13 @@ struct ContentView: View {
                 case .uninstall: UninstallView()
                 case .leftovers: LeftoversView()
                 case .plugins: PluginsView()
+                case .services: ServicesView()
+                case .packages: PackagesView()
+                case .updates: UpdatesView()
+                case .brew: BrewView()
+                case .timeMachine: TimeMachineView()
+                case .network: NetworkView()
+                case .settings: SettingsView()
                 }
             }
         }

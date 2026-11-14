@@ -1038,32 +1038,16 @@ dev_clean_run() {
 # --- Homebrew --------------------------------------------------------------
 
 brew_manage_run() {
-    local names=() kinds=() name app n=0 sel num i outdated deps cellar caskroom state path
+    local names=() kinds=() kb kind name state n=0 sel num i deps
     command -v brew >/dev/null || { msg "Homebrew n'est pas installé."; return 0; }
     export HOMEBREW_NO_AUTO_UPDATE=1
-    outdated=$(brew outdated --quiet 2>/dev/null)
-    cellar=$(brew --cellar)
-    caskroom=$(brew --caskroom)
     hdr "%3s  %-6s  %9s  %-28s  %s\n" "N°" "Type" "Taille" "Nom" "État"
-    # Paquets installés à ta demande (leurs dépendances ne sont pas listées), puis apps (casks)
-    while IFS=$'\t' read -r name app; do
-        [ -n "$name" ] || continue
+    while IFS=$'\t' read -r kb kind name state; do
         n=$((n + 1))
         names+=("$name")
-        if [ "$app" = "-" ]; then
-            kinds+=("paquet")
-            path="$cellar/$name"
-        else
-            kinds+=("app")
-            path="$caskroom/$name"
-            [ -n "$app" ] && [ -d "/Applications/$app" ] && path="/Applications/$app"
-        fi
-        state=$(t "à jour")
-        printf '%s\n' "$outdated" | grep -qxF "$name" && state=$(t "mise à jour disponible")
-        printf "%3d  %-6s  %9s  %-28.28s  %s\n" "$n" "$(t "${kinds[$((n - 1))]}")" "$(human_size "$path")" "$name" "$state"
-    done < <(brew leaves --installed-on-request 2>/dev/null | awk '{ print $0 "\t-" }'
-             brew info --cask --json=v2 --installed 2>/dev/null \
-                 | jq -r '.casks[] | [.token, ([.artifacts[] | objects | .app // empty | .[] | strings] | first // "")] | @tsv')
+        kinds+=("$kind")
+        printf "%3d  %-6s  %9s  %-28.28s  %s\n" "$n" "$(t "$kind")" "$(fmt_kb "$kb")" "$name" "$state"
+    done < <(brew_scan)
     [ "$n" -gt 0 ] || { msg "Rien d'installé avec Homebrew."; return 0; }
     deps=$(brew autoremove -n 2>/dev/null | grep -v '^==>')
     if [ -n "$deps" ]; then
@@ -1092,16 +1076,43 @@ brew_manage_run() {
     confirm
     for num in $sel; do
         i=$((10#$num - 1))
-        if [ "$DRY_RUN" -eq 1 ]; then
-            msg "[simulation] désinstallation de %s" "${names[$i]}"
-            continue
-        fi
-        if [ "${kinds[$i]}" = "app" ]; then
-            brew uninstall --cask "${names[$i]}" && count=$((count + 1))
-        else
-            brew uninstall "${names[$i]}" && count=$((count + 1))
-        fi
+        brew_uninstall_one "${kinds[$i]}" "${names[$i]}"
     done
+}
+
+# Paquets installés à ta demande (leurs dépendances ne sont pas listées), puis apps (casks) :
+# une ligne par élément : Ko, type (paquet|app), nom, état
+brew_scan() {
+    local name app kind path outdated cellar caskroom state
+    export HOMEBREW_NO_AUTO_UPDATE=1
+    outdated=$(brew outdated --quiet 2>/dev/null)
+    cellar=$(brew --cellar)
+    caskroom=$(brew --caskroom)
+    while IFS=$'\t' read -r name app; do
+        [ -n "$name" ] || continue
+        if [ "$app" = "-" ]; then
+            kind=paquet
+            path="$cellar/$name"
+        else
+            kind=app
+            path="$caskroom/$name"
+            [ -n "$app" ] && [ -d "/Applications/$app" ] && path="/Applications/$app"
+        fi
+        state=$(t "à jour")
+        printf '%s\n' "$outdated" | grep -qxF "$name" && state=$(t "mise à jour disponible")
+        printf '%s\t%s\t%s\t%s\n' "$(du -sk "$path" 2>/dev/null | cut -f1)" "$kind" "$name" "$state"
+    done < <(brew leaves --installed-on-request 2>/dev/null | awk '{ print $0 "\t-" }'
+             brew info --cask --json=v2 --installed 2>/dev/null \
+                 | jq -r '.casks[] | [.token, ([.artifacts[] | objects | .app // empty | .[] | strings] | first // "")] | @tsv')
+}
+
+# Désinstalle un élément Homebrew ($1 paquet|app, $2 nom)
+brew_uninstall_one() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        msg "[simulation] désinstallation de %s" "$2"
+        return 0
+    fi
+    if [ "$1" = "app" ]; then brew uninstall --cask "$2"; else brew uninstall "$2"; fi && count=$((count + 1))
 }
 
 # --- plug-ins et extensions ------------------------------------------------
@@ -1238,7 +1249,7 @@ services_scan() {
 }
 
 services_run() {
-    local lines n=0 label file state owner path paths=() labels=() sel num i dom
+    local lines n=0 label file state owner path paths=() labels=() sel num i
     msg "Analyse en cours..."
     load_apps
     lines=$(services_scan)
@@ -1262,21 +1273,27 @@ services_run() {
     confirm
     for num in $sel; do
         i=$((10#$num - 1))
-        dom=$(launch_domain "${paths[$i]}")
-        case "${paths[$i]}" in
-            "$HOME"/*)
-                if [ "$DRY_RUN" -eq 1 ]; then
-                    msg "[simulation] arrêt de %s" "${labels[$i]}"
-                else
-                    launchctl bootout "$dom/${labels[$i]}" 2>/dev/null
-                fi
-                trash_item "${paths[$i]}" ;;
-            *)
-                msg "Droits administrateur requis, lance toi-même :"
-                msg "  sudo launchctl bootout %s" "$(shq "$dom/${labels[$i]}")"
-                msg "  sudo mv %s %s" "$(shq "${paths[$i]}")" "$(shq "$HOME/.Trash/")" ;;
-        esac
+        service_remove "${paths[$i]}" "${labels[$i]}"
     done
+}
+
+# Arrête et retire un service ($1 fichier, $2 label) ; hors dossier perso, commandes sudo à lancer soi-même
+service_remove() {
+    local dom
+    dom=$(launch_domain "$1")
+    case "$1" in
+        "$HOME"/*)
+            if [ "$DRY_RUN" -eq 1 ]; then
+                msg "[simulation] arrêt de %s" "$2"
+            else
+                launchctl bootout "$dom/$2" 2>/dev/null
+            fi
+            trash_item "$1" ;;
+        *)
+            msg "Droits administrateur requis, lance toi-même :"
+            msg "  sudo launchctl bootout %s" "$(shq "$dom/$2")"
+            msg "  sudo mv %s %s" "$(shq "$1")" "$(shq "$HOME/.Trash/")" ;;
+    esac
 }
 
 # --- paquets d'installation (.pkg) -----------------------------------------
@@ -1325,12 +1342,17 @@ pkg_manage_run() {
     msg "Droits administrateur requis, lance toi-même :"
     for num in $sel; do
         i=$((10#$num - 1))
-        msg "  sudo pkgutil --forget %s" "$(shq "${ids[$i]}")"
-        case "${states[$i]}" in
-            trace*) ;;
-            *) msg "    (n'efface que la trace : les fichiers restent, utilise app-uninstall pour l'app)" ;;
-        esac
+        pkg_forget_hint "${ids[$i]}" "${states[$i]}"
     done
+}
+
+# Commande pour effacer la trace d'un paquet ($1 identifiant, $2 état)
+pkg_forget_hint() {
+    msg "  sudo pkgutil --forget %s" "$(shq "$1")"
+    case "$2" in
+        trace*) ;;
+        *) msg "    (n'efface que la trace : les fichiers restent, utilise app-uninstall pour l'app)" ;;
+    esac
 }
 
 # --- mises à jour des apps -------------------------------------------------
@@ -1350,28 +1372,23 @@ is_newer() {
     [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$2" ]
 }
 
-updates_run() {
-    local app name ver latest how token outdated seen=" " tokens=() n=0 num sel line
+# Une ligne par app : nom, version installée, version disponible, mise à jour par, cask Homebrew à mettre à jour (ou -)
+updates_scan() {
+    local app name ver latest how token outdated seen=" " line up
     export HOMEBREW_NO_AUTO_UPDATE=1
     command -v brew >/dev/null && outdated=$(brew outdated --cask --greedy --verbose 2>/dev/null)
-    msg "Analyse en cours (les apps Sparkle sont interrogées sur internet)..."
-    hdr "%3s  %-28s  %-14s  %-14s  %s\n" "N°" "App" "Installée" "Disponible" "Mise à jour par"
     for app in /Applications/*.app "$HOME/Applications"/*.app; do
         [ -d "$app" ] && [ ! -L "$app" ] || continue
         name=$(basename "$app" .app)
         ver=$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist" 2>/dev/null)
         latest="-"
-        num=""
+        up="-"
         token=$(cask_token "$app")
         if [ -n "$token" ]; then
             how="Homebrew"
             seen="$seen$token "
             latest=$(printf '%s\n' "${outdated:-}" | awk -v t="$token" '$1 == t { print $NF }')
-            if [ -n "$latest" ]; then
-                n=$((n + 1)); num=$n; tokens+=("$token")
-            else
-                latest=$(t "à jour")
-            fi
+            if [ -n "$latest" ]; then up=$token; else latest=$(t "à jour"); fi
         elif [ -d "$app/Contents/_MASReceipt" ]; then
             how=$(t "App Store (app App Store > Mises à jour)")
         elif line=$(defaults read "$app/Contents/Info" SUFeedURL 2>/dev/null); then
@@ -1381,17 +1398,26 @@ updates_run() {
         else
             how=$(t "l'app elle-même")
         fi
-        printf "%3s  %-28.28s  %-14.14s  %-14.14s  %s\n" "$num" "$name" "${ver:--}" "$latest" "$how"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$name" "${ver:--}" "$latest" "$how" "$up"
     done
-    # Casks Homebrew en retard sans app dans /Applications (ex : outils en ligne de commande)
+    # Casks en retard sans app dans /Applications
     while IFS= read -r line; do
         token=${line%% *}
         [ -n "$token" ] || continue
         case "$seen" in *" $token "*) continue ;; esac
-        n=$((n + 1)); tokens+=("$token")
-        printf "%3s  %-28.28s  %-14.14s  %-14.14s  %s\n" "$n" "$token" \
-            "$(echo "$line" | sed -n 's/.*(\(.*\)).*/\1/p')" "${line##* }" "Homebrew"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$token" "$(echo "$line" | sed -n 's/.*(\(.*\)).*/\1/p')" "${line##* }" "Homebrew" "$token"
     done <<< "${outdated:-}"
+}
+
+updates_run() {
+    local name ver latest how up tokens=() n=0 num sel
+    msg "Analyse en cours (les apps Sparkle sont interrogées sur internet)..."
+    hdr "%3s  %-28s  %-14s  %-14s  %s\n" "N°" "App" "Installée" "Disponible" "Mise à jour par"
+    while IFS=$'\t' read -r name ver latest how up; do
+        num=""
+        if [ "$up" != "-" ]; then n=$((n + 1)); num=$n; tokens+=("$up"); fi
+        printf "%3s  %-28.28s  %-14.14s  %-14.14s  %s\n" "$num" "$name" "$ver" "$latest" "$how"
+    done < <(updates_scan)
     [ "$n" -gt 0 ] || { msg "Aucune mise à jour Homebrew à faire ici."; return 0; }
     ask "Numéros à mettre à jour avec Homebrew (vide = rien) : "
     read -r sel
@@ -1404,17 +1430,22 @@ updates_run() {
     done
     confirm
     for num in $sel; do
-        token="${tokens[$((10#$num - 1))]}"
-        if [ "$DRY_RUN" -eq 1 ]; then
-            msg "[simulation] brew upgrade --cask %s" "$token"
-            continue
-        fi
-        if brew upgrade --cask "$token"; then
-            count=$((count + 1))
-        else
-            msg "Échec pour %s : lance « brew update » (index Homebrew périmé ?) puis réessaie." "$token"
-        fi
+        brew_upgrade_one "${tokens[$((10#$num - 1))]}"
     done
+}
+
+# Met à jour un cask ($1)
+brew_upgrade_one() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        msg "[simulation] brew upgrade --cask %s" "$1"
+        return 0
+    fi
+    if HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade --cask "$1"; then
+        count=$((count + 1))
+    else
+        msg "Échec pour %s : lance « brew update » (index Homebrew périmé ?) puis réessaie." "$1"
+        return 1
+    fi
 }
 
 # --- retrait de la partie Intel des apps -----------------------------------
@@ -1680,23 +1711,26 @@ network_diag() {
     scutil --dns 2>/dev/null | awk '/^resolver #1/ { r = 1; next } /^resolver/ { r = 0 } r && /nameserver\[/ { print "  - " $3 }' | sort -u
     msg "Proxy actifs :"
     line=$(scutil --proxy 2>/dev/null | awk '/Enable : 1/ { sub(/Enable.*/, ""); gsub(/ /, ""); print "  - " $0 }')
-    echo "${line:-  - aucun}"
+    echo "${line:-  - $(t "aucun")}"
     msg "Entrées ajoutées dans /etc/hosts (hors réglages d'origine localhost et broadcasthost) :"
     line=$(grep -vE '^[[:space:]]*(#|$)' /etc/hosts | grep -vwE 'localhost|broadcasthost' | sed 's/^/  - /')
-    echo "${line:-  - aucune}"
+    echo "${line:-  - $(t "aucune")}"
     msg "Extensions réseau actives :"
     line=$(systemextensionsctl list 2>/dev/null | grep 'activated enabled' | awk -F'\t' '{ print "  - " $5 }')
-    echo "${line:-  - aucune}"
+    echo "${line:-  - $(t "aucune")}"
 }
 
+# Test de résolution DNS ($1 = site ; demandé s'il manque)
 network_resolve() {
-    local site
+    local site="${1:-}"
     command -v dig >/dev/null || { msg "dig absent."; return 0; }
-    ask "Site à tester (vide = apple.com) : "
-    read -r site
+    if [ -z "$site" ]; then
+        ask "Site à tester (vide = apple.com) : "
+        read -r site
+    fi
     site=${site:-apple.com}
     dig +noall +stats "$site" 2>/dev/null | sed -n "s/^;; Query time: /$(t "Temps de réponse : ")/p; s/^;; SERVER: \([^#]*\)#.*/$(t "Serveur DNS : ")\1/p"
-    printf 'Adresse : %s\n' "$(dig +short "$site" 2>/dev/null | tail -1)"
+    msg "Adresse : %s" "$(dig +short "$site" 2>/dev/null | tail -1)"
 }
 
 network_run() {
@@ -1714,14 +1748,22 @@ network_run() {
     for num in $sel; do
         echo "--- ${labels[$((10#$num - 1))]}"
         case "$((10#$num))" in
-            1) msg "Droits administrateur requis, lance toi-même :"
-               msg "  sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder" ;;
+            1) network_flush_hint ;;
             2) network_diag ;;
             3) network_resolve ;;
-            4) networkQuality 2>&1 | grep -vE '^=+' | sed "s/^Uplink capacity/$(t "Débit montant")/; s/^Downlink capacity/$(t "Débit descendant")/;
-                   s/^Responsiveness/$(t "Réactivité")/; s/^Idle Latency/$(t "Latence au repos")/" ;;
+            4) network_speed ;;
         esac
     done
+}
+
+network_flush_hint() {
+    msg "Droits administrateur requis, lance toi-même :"
+    msg "  sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"
+}
+
+network_speed() {
+    networkQuality 2>&1 | grep -vE '^=+' | sed "s/^Uplink capacity/$(t "Débit montant")/; s/^Downlink capacity/$(t "Débit descendant")/;
+        s/^Responsiveness/$(t "Réactivité")/; s/^Idle Latency/$(t "Latence au repos")/"
 }
 
 # --- Time Machine ----------------------------------------------------------
@@ -1765,7 +1807,7 @@ tm_excluded() {
 tm_status() {
     local dest list
     dest=$(tm_dest)
-    msg "Destination : %s" "${dest:-aucune (disque débranché ?)}"
+    msg "Destination : %s" "${dest:-$(t "aucune (disque débranché ?)")}"
     # shellcheck disable=SC2046  # les trois tailles de df sont passées comme arguments distincts
     [ -n "$dest" ] && msg "Espace : %s utilisés sur %s, %s libres" $(df -h "$dest" | awk 'NR == 2 { print $3, $2, $4 }')
     if [ "$(defaults read "$TM_PREFS" AutoBackup 2>/dev/null)" = "1" ]; then
@@ -1952,11 +1994,20 @@ timemachine_run() {
         2) tm_exclusions_run ;;
         3) tm_analyse_run ;;
         4) tm_exclusions_run remove ;;
-        5) tmutil startbackup && sleep 3 && tm_status | tail -1 ;;
+        5) tm_start ;;
         6) tm_unique_run delete ;;
         7) tm_unique_run ;;
         8) tm_compare_run ;;
     esac
+}
+
+# Lance une sauvegarde, puis affiche si elle a démarré
+tm_start() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        msg "[simulation] tmutil startbackup"
+        return 0
+    fi
+    tmutil startbackup && sleep 3 && tm_status | tail -1
 }
 
 # --- index Spotlight -------------------------------------------------------
@@ -2218,9 +2269,11 @@ maintenance_run() {
 
 # --- mode api : piloté par l'app, sans aucune question ----------------------
 # Sorties en colonnes séparées par des tabulations. Code de retour 2 : demande inconnue.
-#   api list orphans|plugins|services|pkgs|apps|dev-caches|npx-tools|user-clean|system-clean|excludes|tm-backups
+#   api list orphans|plugins|services|pkgs|updates|brew|apps|dev-caches|npx-tools|user-clean|system-clean|excludes|tm-backups
 #   api list app-files <app>         api list user-clean-items <0|1|2>   api clear <cache ou journal>...
-#   api text tm-status|network-diag
+#   api text tm-status|network-diag|dns-test [site]|dns-flush|speed-test     api tm-backup
+#   api service-remove <fichier>...  api pkg-forget <paquet>...   api brew-upgrade <app>...   api brew-uninstall <nom>...
+#   api brew-autoremove              api sentinel on|off|status
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>   api plugin-remove <chemin>...
 #   api user-clean <0|1|2>...        api dev-clean <nom>...       api npx-remove <dossier>...   api version | lang
 #   api quit <app>...                ferme des apps (comme Cmd+Q)      api cask <app>   nom du cask Homebrew
@@ -2232,7 +2285,17 @@ api_list() {
         orphans) orphans_scan | sort -rn ;;
         plugins) load_apps; plugins_scan | sort -rn ;;
         services) load_apps; services_scan ;;
-        pkgs) pkg_scan ;;
+        pkgs)
+            # État traduit pour l'affichage
+            pkg_scan | while IFS=$'\t' read -r id ver date files state loc; do
+                printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$ver" "$date" "$files" "$(t "$state")" "$loc"
+            done ;;
+        updates) updates_scan ;;
+        brew)
+            command -v brew >/dev/null || return 0
+            brew_scan | while IFS=$'\t' read -r kb kind name state; do
+                printf '%s\t%s\t%s\t%s\n' "${kb:-0}" "$(t "$kind")" "$name" "$state"
+            done ;;
         apps)
             for d in /Applications "$HOME/Applications"; do
                 for app in "$d"/*.app; do
@@ -2285,6 +2348,9 @@ api_run() {
             case "${1:-}" in
                 tm-status) tm_status ;;
                 network-diag) network_diag ;;
+                dns-test) network_resolve "${2:-apple.com}" ;;
+                dns-flush) network_flush_hint ;;
+                speed-test) network_speed ;;
                 *) return 2 ;;
             esac ;;
         trash)
@@ -2295,7 +2361,9 @@ api_run() {
         exclude-add) exclude_add "${1:-}" ;;
         exclude-remove)
             [ -n "${1:-}" ] && [ -f "$EXCLUDE_FILE" ] || return 1
-            exclude_remove_line "${1/#$HOME/~}" ;;
+            for p in "$@"; do
+                exclude_remove_line "${p/#$HOME/~}"
+            done ;;
         user-clean)
             user_clean_build
             for p in "$@"; do
@@ -2323,6 +2391,55 @@ api_run() {
                 npx_remove "$p" || rc=$?
             done
             return "$rc" ;;
+        service-remove)
+            # Seuls les services que la liste a renvoyés sont acceptés
+            load_apps
+            known=$(services_scan)
+            for p in "$@"; do
+                name=$(awk -F'\t' -v p="$p" '$5 == p { print $1 }' <<< "$known")
+                if [ -n "$name" ]; then service_remove "$p" "$name" || rc=1; else rc=2; fi
+            done
+            return "$rc" ;;
+        pkg-forget)
+            known=$(pkg_scan)
+            msg "Droits administrateur requis, lance toi-même :"
+            for p in "$@"; do
+                state=$(awk -F'\t' -v p="$p" '$1 == p { print $5 }' <<< "$known")
+                if [ -n "$state" ]; then pkg_forget_hint "$p" "$state"; else rc=2; fi
+            done
+            return "$rc" ;;
+        brew-upgrade)
+            # Nom affiché par « list updates » : seul un cask en retard est accepté
+            known=$(updates_scan)
+            for p in "$@"; do
+                name=$(awk -F'\t' -v p="$p" '$1 == p && $5 != "-" { print $5 }' <<< "$known")
+                if [ -n "$name" ]; then brew_upgrade_one "$name" || rc=1; else rc=2; fi
+            done
+            return "$rc" ;;
+        brew-uninstall)
+            command -v brew >/dev/null || return 2
+            known=$(brew_scan)
+            for p in "$@"; do
+                kind=$(awk -F'\t' -v p="$p" '$3 == p { print $2 }' <<< "$known")
+                if [ -n "$kind" ]; then brew_uninstall_one "$kind" "$p" || rc=1; else rc=2; fi
+            done
+            return "$rc" ;;
+        brew-autoremove)
+            command -v brew >/dev/null || return 2
+            if [ "$DRY_RUN" -eq 1 ]; then
+                msg "[simulation] brew autoremove"
+            else
+                HOMEBREW_NO_AUTO_UPDATE=1 brew autoremove || rc=1
+            fi
+            return "$rc" ;;
+        tm-backup) tm_start ;;
+        sentinel)
+            case "${1:-}" in
+                on) sentinel_on ;;
+                off) sentinel_off ;;
+                status) if [ -f "$SENTINEL_PLIST" ]; then echo 1; else echo 0; fi ;;
+                *) return 2 ;;
+            esac ;;
         plugin-remove)
             # Seuls les modules que la liste a renvoyés sont acceptés
             load_apps
@@ -2524,6 +2641,26 @@ Ouvrir les réglages	Open Settings
 en cours d'utilisation	in use
 Retirer	Remove
 Retirer la sélection ?	Remove the selection?
+aucune (disque débranché ?)	none (disk unplugged?)
+[simulation] tmutil startbackup	[simulation] tmutil startbackup
+Adresse : %s	Address: %s
+aucun	none
+aucune	none
+Service	Service
+Effacer la trace	Forget the receipt
+Mettre à jour avec Homebrew	Update with Homebrew
+Mettre à jour la sélection ?	Update the selection?
+Désinstaller	Uninstall
+Désinstaller la sélection ?	Uninstall the selection?
+Retirer les dépendances inutiles	Remove unused dependencies
+Retirer les dépendances devenues inutiles ?	Remove dependencies no longer needed?
+Afficher l'état	Show status
+Diagnostic	Diagnostics
+Test DNS (apple.com)	DNS test (apple.com)
+Test de débit (environ 20 s)	Speed test (about 20 s)
+Vider le cache DNS	Flush the DNS cache
+Surveiller la Corbeille (fichiers laissés par les apps qu'on y jette)	Watch the Trash (files left by apps thrown into it)
+Éléments protégés	Protected items
 Annuler	Cancel
 Confirmer ? (oui/non) 	Confirm? (yes/no) 
 Annulé.	Cancelled.

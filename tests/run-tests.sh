@@ -175,6 +175,18 @@ api npx-remove "$T/Library/Preferences" >/dev/null; rc=$?
 check "npx-remove hors dossier npx : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
 api plugin-remove "$T/Library/Preferences" >/dev/null; rc=$?
 check "plugin-remove sur un chemin hors liste : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
+api service-remove "$T/Library/Preferences" >/dev/null; rc=$?
+check "service-remove sur un chemin hors liste : refusé" test "$rc" -eq 2 -a -d "$T/Library/Preferences"
+api pkg-forget com.test.inconnu >/dev/null; rc=$?
+check "pkg-forget sur un paquet inconnu : refusé" test "$rc" -eq 2
+check "sentinel status : inactive au départ" test "$(api sentinel status)" = 0
+check "dns-flush : commande sudo affichée" grep -q "sudo dscacheutil -flushcache" <<< "$(api text dns-flush)"
+out=$(api text tm-status)
+check "tm-status : aucun texte français en anglais" test -z "$(grep aucune <<< "$out")"
+api exclude-add "$T/Library/Logs" >/dev/null
+api exclude-add "$T/Library/Preferences" >/dev/null
+api exclude-remove "$T/Library/Logs" "$T/Library/Preferences" >/dev/null
+check "exclude-remove : plusieurs éléments retirés d'un coup" test -z "$(api list excludes)"
 api list inconnu >/dev/null; rc=$?
 check "demande inconnue : code 2" test "$rc" -eq 2
 check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"

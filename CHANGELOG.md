@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - App: banner when Full Disk Access is missing, with a button to open the right System Settings pane.
 - npx tools (`~/.npm/_npx`) in `dev-clean` and in the app: one line per tool (name, size, date); a tool in use is never removed.
 - App: Plug-ins and extensions screen; system extensions and items outside your home folder show what to do yourself.
+- App: Startup services, .pkg receipts, App updates, Homebrew, Time Machine, Network and Settings screens.
 
 ### Changed
 
@@ -25,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - core-eraser's own files are never reported as leftovers.
 - Accented text is handled when no system language is set (app, background service).
+- English output no longer shows French words (.pkg states, Time Machine destination, network diagnostics, DNS test).
 
 ## [0.1.0] - 2026-11-13
 

@@ -5,7 +5,7 @@
 - [x] Uninstall: remove an app and its leftovers together, with a checkbox per item (script and app)
 - [x] Script: checkboxes per item inside each cleanup category (browser caches, user caches, dev caches)
 - [x] App: the same per-item checkboxes for caches (Details under each category)
-- [ ] Remaining screens: plug-ins, services, packages, updates, Homebrew, Time Machine, network, settings
+- [x] Remaining screens: plug-ins, services, packages, updates, Homebrew, Time Machine, network, settings
 - [x] npx tools (`~/.npm/_npx`) as a separate developer cache: one line per tool (name, size, date), never remove a tool in use
 - [x] Sign the app with a stable identity, so Full Disk Access survives rebuilds
 - [x] Banner when Full Disk Access is missing
