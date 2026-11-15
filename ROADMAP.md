@@ -24,5 +24,10 @@
 - [x] Settings: add a protected item from the app (file picker)
 - [x] Script tables: align columns with accented characters (remove this known limitation)
 
+## 0.5.0
+- [ ] Updates: a Homebrew app that updated itself is not reported as outdated (compare the app's own version with the available one)
+- [ ] Claude Code: check the `~/.claude` layout with the installed version, then update the tested version
+- [ ] App, Leftovers: scan automatically when the screen opens
+
 ## Later
 - [ ] Real-world check: sentinel and tm-clean run by launchd through the app; downloaded zip opens after "Open Anyway"
