@@ -14,7 +14,7 @@ Only the latest release receives security fixes.
 
 core-eraser deletes files, so it is built to fail safe:
 
-- It runs with your normal user rights and **never runs `sudo` itself**. Commands needing administrator rights are printed, with every path quoted (`printf %q`) so that a crafted file name cannot run code when pasted.
+- It runs with your normal user rights. Actions needing administrator rights run only after confirmation, through the macOS authentication prompt (`osascript … with administrator privileges`). Only a fixed list of commands is accepted (`admin_check`), with checked arguments: `/../` is refused, moves go only from `/Library` or `/Applications` to your Trash, and every argument is quoted (`printf %q`) so that a crafted file name cannot run code.
 - Files are moved to the **Trash** rather than deleted, except caches and logs. Moving to the Trash is refused outside your home folder and `/Applications`, and for any item on the exclusion list.
 - Values inserted into AppleScript (app identifiers) are restricted to letters, digits, dots and hyphens.
 - Data read from the internet (Sparkle update feeds) is fetched over HTTPS only, and version strings are filtered to safe characters.

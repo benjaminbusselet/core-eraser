@@ -25,6 +25,7 @@ struct UninstallView: View {
     @State private var loading = false
     @State private var output = ""
     @State private var confirmTrash = false
+    @State private var sysextWarning = ""
 
     private var checkedKB: Int { items.filter(\.checked).reduce(0) { $0 + $1.kb } }
 
@@ -70,6 +71,10 @@ struct UninstallView: View {
                         Label(state.t("L'app est ouverte : elle sera fermée avant."), systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                     }
+                    if !sysextWarning.isEmpty {
+                        Label(sysextWarning, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange).textSelection(.enabled)
+                    }
                     if !cask.isEmpty {
                         Text(state.t("Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite.")
                             .replacingOccurrences(of: "%s", with: cask))
@@ -109,11 +114,13 @@ struct UninstallView: View {
     private func loadItems(_ app: InstalledApp?) async {
         items = []
         cask = ""
+        sysextWarning = ""
         output = ""
         guard let app else { return }
         loading = true
         async let files = Script.run(["list", "app-files", app.path], lang: state.lang)
         async let token = Script.run(["cask", app.path], lang: state.lang)
+        async let warning = Script.run(["text", "sysext-warning", app.path], lang: state.lang)
         // L'app elle-même en premier, puis ses fichiers ; tout est coché au départ
         var next = [AppItem(path: app.path, kb: app.kb, checked: true)]
         for row in await files.rows where row.count == 2 {
@@ -123,6 +130,7 @@ struct UninstallView: View {
         guard selected == app else { return }
         items = next
         cask = (await token).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        sysextWarning = (await warning).output.trimmingCharacters(in: .whitespacesAndNewlines)
         loading = false
     }
 

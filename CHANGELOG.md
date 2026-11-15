@@ -3,6 +3,25 @@
 All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Actions needing administrator rights now run directly, after confirmation, through the macOS password or Touch ID prompt, instead of printing a command to paste: system caches and logs, DNS cache, Spotlight index, `/Library` plug-ins and services, package receipts, Time Machine exclusions and backups.
+- App, Maintenance: system caches and logs are switches like the other tasks, instead of commands to copy.
+
+### Added
+
+- Test: every text of the app has an English translation.
+
+### Fixed
+
+- Mixed languages: plug-in types and system extension states are translated; the app shows sizes in the language chosen in the app (Ko, Mo, Go in French), not the Mac's.
+- Plug-ins: a system extension is removed with administrator rights when System Integrity Protection is off; otherwise core-eraser shows "Protected by SIP". The System Settings path shown before no longer exists.
+- Uninstall: a warning when the app has active system extensions, which macOS keeps after the app is deleted, with the app's own removal command when known (ProtonVPN: Clear Application Data).
+- Uninstall: an app installed by a .pkg (owned by root) goes to the Trash with administrator rights, instead of failing with a wrong Full Disk Access message.
+- Startup services: a service that is not loaded can be removed; stopping it no longer blocks the move to the Trash.
+
 ## [0.4.1] - 2026-11-15
 
 ### Changed

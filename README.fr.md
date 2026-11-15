@@ -26,7 +26,7 @@ Une alternative légère et lisible aux fonctions de nettoyage d'apps comme Pear
 
 - **Corbeille plutôt que suppression** : les fichiers vont à la Corbeille, d'où tu peux les remettre. Seuls les caches et journaux, que les apps recréent, sont supprimés directement.
 - **Rien sans ton choix** : chaque action liste ce qu'elle va toucher et demande confirmation.
-- **Ne lance jamais `sudo` lui-même** : les actions qui exigent les droits administrateur affichent la commande exacte à lancer toi-même, avec des chemins protégés.
+- **Droits administrateur à la demande** : les actions qui les exigent (caches système, DNS, Spotlight, éléments de `/Library`, Time Machine) s'exécutent après ta confirmation, via la fenêtre macOS de mot de passe ou Touch ID. Seule une liste fermée de commandes, aux arguments vérifiés, passe par là.
 - **Éléments protégés** : `./core-eraser.sh exclude add <chemin>` met un fichier ou un dossier à l'abri de toutes les commandes.
 - **Simulation** : `./core-eraser.sh --dry-run <commande>` montre ce qui se passerait, sans rien modifier.
 - **Apps ouvertes** : quand une app concernée est ouverte, core-eraser propose de la fermer (comme Cmd+Q).
@@ -66,7 +66,8 @@ Raccourci facultatif dans `~/.zshrc` : `alias eraser='/chemin/vers/core-eraser/c
 
 ## Limites connues
 
-- Les commandes qui exigent `sudo` sont affichées, pas lancées : elles ne sont donc pas testées automatiquement.
+- Les extensions système (VPN, filtres réseau) restent enregistrées après suppression de leur app, même par le Finder : macOS refuse de les retirer, même avec les droits administrateur, tant que la protection de l'intégrité du système (SIP) est active. Elles restent inactives. Leur app peut les retirer (ProtonVPN : « Effacer les données de l'application »), puis un redémarrage. Sinon : désactiver SIP en mode récupération, cliquer Retirer dans core-eraser, redémarrer, puis réactiver SIP. core-eraser prévient avant de désinstaller une telle app.
+- Les actions avec droits administrateur ne sont testées qu'en simulation : la fenêtre de mot de passe ne peut pas tourner dans les tests automatiques.
 - `sentinel` (surveillance de la Corbeille) et `tm-clean` ont besoin de l'accès complet au disque : active-les depuis l'app (Réglages), qui le possède. Activés depuis Terminal, ils tournent avec bash, qui ne l'a en général pas.
 - `tm-clean` se lance au montage du disque, en même temps que la sauvegarde Time Machine : cette première sauvegarde peut encore contenir les caches.
 - `updates` ne compare les versions que des apps Homebrew, Sparkle et App Store ; une version bêta peut être signalée à tort comme en retard.

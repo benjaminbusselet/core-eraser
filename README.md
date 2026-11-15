@@ -26,7 +26,7 @@ Run `./core-eraser.sh -h` for the full list.
 
 - **Trash, not delete**: files go to the Trash, so you can put them back. Only caches and logs, which apps recreate, are deleted directly.
 - **Nothing without your choice**: every action lists what it will touch and asks for confirmation.
-- **Never runs `sudo` itself**: actions that need administrator rights print the exact command for you to run, with paths safely quoted.
+- **Administrator rights on request**: actions that need them (system caches, DNS, Spotlight, `/Library` items, Time Machine) run after your confirmation, through the macOS password or Touch ID prompt. Only a fixed list of commands, with checked arguments, can be run this way.
 - **Protected items**: `./core-eraser.sh exclude add <path>` keeps a file or folder away from every command.
 - **Dry run**: `./core-eraser.sh --dry-run <command>` shows what would happen and changes nothing.
 - **Open apps**: when an app involved is open, core-eraser offers to quit it (like Cmd+Q).
@@ -66,7 +66,8 @@ Optional shortcut in `~/.zshrc`: `alias eraser='/path/to/core-eraser/core-eraser
 
 ## Known limitations
 
-- Commands needing `sudo` are printed, not run, so they are not tested automatically.
+- System extensions (VPN, network filters) stay registered after their app is deleted, even through the Finder: macOS refuses to remove them, even with administrator rights, while System Integrity Protection is on. They stay inactive. Their app can remove them (ProtonVPN: Clear Application Data), then a restart. Otherwise turn SIP off in Recovery, click Remove in core-eraser, restart, then turn SIP back on. core-eraser warns before uninstalling such an app.
+- Actions with administrator rights are tested in simulation only: the password prompt cannot run in automatic tests.
 - `sentinel` (Trash monitoring) and `tm-clean` need Full Disk Access: turn them on from the app (Settings), which holds it. Turned on from Terminal, they run with bash, which usually lacks it.
 - `tm-clean` runs when the disk is mounted, at the same time as the Time Machine backup: that first backup may still include the caches.
 - `updates` compares versions only for Homebrew, Sparkle and App Store apps; beta versions may be reported as outdated.

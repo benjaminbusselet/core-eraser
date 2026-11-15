@@ -25,6 +25,10 @@
 - [x] Script tables: align columns with accented characters (remove this known limitation)
 
 ## 0.5.0
+- [x] Run actions needing administrator rights through the macOS prompt (password or Touch ID), instead of printing commands
+- [x] Fix mixed languages: plug-in types, system extension states, size units in the app
+
+## 0.6.0
 - [ ] Updates: a Homebrew app that updated itself is not reported as outdated (compare the app's own version with the available one)
 - [ ] Claude Code: check the `~/.claude` layout with the installed version, then update the tested version
 - [ ] App, Leftovers: scan automatically when the screen opens

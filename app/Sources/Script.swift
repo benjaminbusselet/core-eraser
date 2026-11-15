@@ -69,7 +69,7 @@ enum Script {
 /// État partagé : langue, simulation, traductions (fournies par le catalogue du script).
 @MainActor
 final class AppState: ObservableObject {
-    @Published var lang = "en"
+    @Published var lang = "en" { didSet { sizeLang = lang } }
     @Published var dryRun = false
     @Published var hasFullDiskAccess = true
     @Published private var table: [String: String] = [:]
@@ -83,7 +83,6 @@ final class AppState: ObservableObject {
         "Sélection :", "Mettre les éléments cochés à la Corbeille ?", "L'app est ouverte : elle sera fermée avant.",
         "Élément", "Détail", "Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite.", "Clique sur Analyser pour chercher les restes.",
         "Mettre la sélection à la Corbeille ?", "Exécuter les opérations cochées ?", "Annuler",
-        "Commandes à lancer toi-même dans Terminal (droits administrateur) :",
         "L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés.",
         "Ouvrir les réglages",
         "en cours d'utilisation",
@@ -155,7 +154,19 @@ final class AppState: ObservableObject {
     }
 }
 
-/// Taille lisible à partir d'un nombre de Ko.
+/// Langue des unités de taille : celle choisie dans l'app, pas celle du Mac.
+nonisolated(unsafe) var sizeLang = "en"
+
+/// Taille lisible à partir d'un nombre de Ko : Ko, Mo, Go en français (virgule), KB, MB, GB en anglais.
 func formatKB(_ kb: Int) -> String {
-    ByteCountFormatter.string(fromByteCount: Int64(kb) * 1024, countStyle: .file)
+    let french = sizeLang == "fr"
+    let units = french ? ["Ko", "Mo", "Go", "To"] : ["KB", "MB", "GB", "TB"]
+    var value = Double(kb)
+    var index = 0
+    while value >= 1024 && index < units.count - 1 {
+        value /= 1024
+        index += 1
+    }
+    let number = index == 0 ? String(format: "%.0f", value) : String(format: "%.1f", value)
+    return "\(french ? number.replacingOccurrences(of: ".", with: ",") : number) \(units[index])"
 }

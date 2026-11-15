@@ -59,13 +59,35 @@ missing=$(perl -e '
     }' "$SCRIPT")
 check "chaque message a une traduction anglaise" test -z "$missing"
 [ -z "$missing" ] || printf '%s\n' "$missing" | sed 's/^/        /'
+# Textes de l'app (liste « keys » de Script.swift) : chacun doit avoir sa traduction dans le catalogue
+app_missing=$(perl -e '
+    local $/; open my $f, "<", $ARGV[0]; my $s = <$f>; open my $g, "<", $ARGV[1]; my $w = <$g>;
+    my %cat; if ($s =~ /^i18n_catalog\(\) \{\n(.*?)^\}/ms) { for (split /\n/, $1) { $cat{$1} = 1 if /^([^\t]*)\t/ } }
+    my ($keys) = $w =~ /static let keys = \[(.*?)\]/s;
+    while ($keys =~ /"((?:[^"\\]|\\.)*)"/g) { my $k = $1; next if $k =~ /^(Time Machine|Claude Code|App|Maintenance|Type|Version)$/; print "app sans traduction : $k\n" unless $cat{$k} }
+    ' "$SCRIPT" "$ROOT/app/Sources/Script.swift")
+check "chaque texte de l'app a une traduction anglaise" test -z "$app_missing"
+[ -z "$app_missing" ] || printf '%s\n' "$app_missing" | sed 's/^/        /'
 
 echo "3. Sécurité"
 new_home
 marker="$T/PIEGE"
 cmd=$(lib "echo \"sudo mv \$(shq '/x\$(touch $marker)\"y') /dest\"")
 bash -c "${cmd/sudo mv/:}"
-check "un chemin piégé dans une commande sudo affichée ne s'exécute pas" test ! -e "$marker"
+check "un chemin piégé, protégé par shq, ne s'exécute pas" test ! -e "$marker"
+check "droits administrateur : mv vers la Corbeille depuis /Library accepté" lib "admin_check mv /Library/Foo/x.plugin '$T/.Trash/'"
+check "droits administrateur : mv hors /Library refusé" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check mv /etc/hosts \"$T/.Trash/\"'"
+check "droits administrateur : app de /Applications vers un nom de la Corbeille accepté" lib "admin_check mv '/Applications/A B.app' '$T/.Trash/A B.app'"
+check "droits administrateur : sous-dossier de la Corbeille refusé" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check mv /Applications/A.app \"$T/.Trash/x/A.app\"'"
+check "droits administrateur : mv vers un autre dossier refusé" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check mv /Library/Foo /tmp/'"
+check "droits administrateur : chemin avec /../ refusé" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check mv /Library/../etc/hosts \"$T/.Trash/\"'"
+check "droits administrateur : réinitialisation des extensions refusée" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check systemextensionsctl reset'"
+check "droits administrateur : retrait d'extension système accepté" lib "admin_check systemextensionsctl uninstall TC3Q7MAJXF com.example.ext"
+check "droits administrateur : retrait d'extension avec identifiant piégé refusé" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check systemextensionsctl uninstall TC3Q7MAJXF \"a;b\"'"
+check "extension système avec SIP active : « Protected by SIP »" grep -q "^Protected by SIP: com.x.ext$" <<< "$(lib "csrutil() { echo 'System Integrity Protection status: enabled.'; }; sysext_remove /Library/SystemExtensions/U/com.x.ext.systemextension")"
+check "extension système avec SIP désactivée : retrait demandé" grep -q "administrator rights: systemextensionsctl uninstall" <<< "$(lib "csrutil() { echo 'System Integrity Protection status: disabled.'; }; plutil() { echo com.x.ext; }; team_of() { echo ABCDEFGHIJ; }; DRY_RUN=1; sysext_remove /Library/SystemExtensions/U/com.x.ext.systemextension")"
+check "droits administrateur : commande hors liste refusée" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check rm -rf /'"
+check "droits administrateur : find hors dossiers système refusé" bash -c "! HOME='$T' CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; admin_check find / -delete'"
 check "Corbeille refusée hors du dossier perso" bash -c "! (HOME='$T' TOOLS_LANG=en CORE_ERASER_LIB=1 bash -c 'source \"$SCRIPT\"; trash_item /etc/hosts')"
 touch "$T/Library/Preferences/com.test.keep.plist"
 run exclude add "$T/Library/Preferences/com.test.keep.plist" >/dev/null
@@ -144,7 +166,7 @@ check "list orphans : 5 colonnes, reste détecté" bash -c "awk -F'\t' '/com.tes
 check "list apps : la fausse app est listée, fermée" grep -q "^0	[0-9]*	$T/Applications/CoreEraserTest.app$" <<< "$(api list apps)"
 check "list app-files : réglages de l'app" grep -q "com.test.coreeraser.app.plist$" <<< "$(api list app-files "$T/Applications/CoreEraserTest.app")"
 check "list user-clean : 3 lignes" test "$(api list user-clean | wc -l | tr -d ' ')" = 3
-check "list system-clean : 3 lignes avec commande sudo" test "$(api list system-clean | grep -c '	sudo find ')" = 3
+check "list system-clean : 3 lignes (numéro, taille, nom)" test "$(api list system-clean | awk -F'\t' 'NF == 3' | wc -l | tr -d ' ')" = 3
 api exclude-add "$T/Library/Preferences/com.test.coreeraser.leftover.plist" >/dev/null
 check "exclude-add puis list excludes" grep -q "com.test.coreeraser.leftover.plist" <<< "$(api list excludes)"
 api trash "$T/Library/Preferences/com.test.coreeraser.leftover.plist" >/dev/null; rc=$?
@@ -180,7 +202,17 @@ check "service-remove sur un chemin hors liste : refusé" test "$rc" -eq 2 -a -d
 api pkg-forget com.test.inconnu >/dev/null; rc=$?
 check "pkg-forget sur un paquet inconnu : refusé" test "$rc" -eq 2
 check "sentinel status : inactive au départ" test "$(api sentinel status)" = 0
-check "dns-flush : commande sudo affichée" grep -q "sudo dscacheutil -flushcache" <<< "$(api text dns-flush)"
+check "dns-flush en simulation : commandes prévues, rien d'exécuté" grep -q "administrator rights: dscacheutil -flushcache && killall -HUP mDNSResponder" <<< "$(run --dry-run api text dns-flush </dev/null)"
+check "system-clean-run en simulation : 3 éléments acceptés" grep -q "administrator rights: find /Library/Caches" <<< "$(run --dry-run api system-clean-run 0 </dev/null)"
+check "service déjà arrêté : son arrêt peut échouer sans bloquer le retrait" grep -q "launchctl bootout system/x 2>/dev/null || true && mv" <<< "$(lib "DRY_RUN=1; admin_queue --try launchctl bootout system/x; admin_queue mv /Library/LaunchDaemons/x.plist '$T/.Trash/'; admin_flush")"
+mkdir -p "$T/Applications/Vpn.app/Contents/Library/SystemExtensions/com.x.ext.systemextension/Contents"
+plutil -create xml1 "$T/Applications/Vpn.app/Contents/Library/SystemExtensions/com.x.ext.systemextension/Contents/Info.plist"
+plutil -insert CFBundleIdentifier -string com.x.ext "$T/Applications/Vpn.app/Contents/Library/SystemExtensions/com.x.ext.systemextension/Contents/Info.plist"
+fake_ctl="systemextensionsctl() { printf '*\\t*\\tT\\tcom.x.ext (1/1)\\tX\\t[%s]\\n' \"\$STATE\"; }"
+check "app avec extension système active : avertissement avant désinstallation" grep -q "active system extensions (com.x.ext)" <<< "$(lib "$fake_ctl; STATE='activated enabled'; sysext_warning '$T/Applications/Vpn.app'")"
+check "extension déjà retirée : pas d'avertissement" test -z "$(lib "$fake_ctl; STATE='terminated waiting to uninstall on reboot'; sysext_warning '$T/Applications/Vpn.app'")"
+api system-clean-run 9 >/dev/null; rc=$?
+check "system-clean-run : numéro inconnu refusé" test "$rc" -eq 2
 out=$(api text tm-status)
 check "tm-status : aucun texte français en anglais" test -z "$(grep aucune <<< "$out")"
 api exclude-add "$T/Library/Logs" >/dev/null
@@ -223,6 +255,12 @@ check "anglais par défaut" grep -q "^core-eraser: command-line" <<< "$(HOME="$T
 run lang fr >/dev/null
 check "« lang fr » est mémorisé" grep -qx fr "$T/Library/Application Support/io.github.benjaminbusselet.core-eraser/lang"
 check "l'aide passe en français" grep -q "^core-eraser : entretien" <<< "$(HOME="$T" "$SCRIPT" -h 2>&1)"
+check "type de module traduit en français" test "$(HOME="$T" TOOLS_LANG=fr CORE_ERASER_LIB=1 bash -c "source \"$SCRIPT\"; plugin_type_label systemextension")" = "extension système"
+check "type de module traduit en anglais" test "$(lib "plugin_type_label workflow")" = "Automator workflow"
+check "état d'extension système traduit en français" test "$(HOME="$T" TOOLS_LANG=fr CORE_ERASER_LIB=1 bash -c "source \"$SCRIPT\"; sysext_state_label 'activated enabled'")" = "activée"
+check "état d'extension système traduit en anglais" test "$(lib "sysext_state_label 'activated enabled'")" = "enabled"
+check "type inconnu gardé tel quel" test "$(lib "plugin_type_label xyz")" = "xyz"
+check "l'app n'utilise plus les unités du Mac" bash -c "! grep -q ByteCountFormatter '$ROOT'/app/Sources/*.swift"
 # orphans plutôt que user-clean : ce dernier pose une question de plus quand un navigateur est ouvert
 touch "$T/Library/Preferences/com.test.coreeraser.leftover.plist"
 n=$(echo "" | LANG_TEST=en run orphans | awk '/com.test.coreeraser.leftover.plist/ { print $1 }')

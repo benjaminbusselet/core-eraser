@@ -15,12 +15,12 @@
 # Nettoyage
 #   user-clean        : caches des navigateurs, caches et journaux de ton dossier perso
 #   dev-clean         : caches des outils de développement installés (npm, pip, Homebrew, Xcode), outils npx
-#   system-clean      : caches et journaux système (tailles), commandes sudo pour les vider
+#   system-clean      : caches et journaux système (tailles), vidage avec droits administrateur
 # Stockage et sauvegarde
 #   timemachine       : état, exclusions, analyse, sauvegarde, place de chaque sauvegarde, différences
-#   spotlight         : état de l'index Spotlight, commande sudo pour le reconstruire
+#   spotlight         : état de l'index Spotlight, reconstruction avec droits administrateur
 # Réseau
-#   network           : diagnostic, test DNS, test de débit, commande sudo pour vider le cache DNS
+#   network           : diagnostic, test DNS, test de débit, vidage du cache DNS avec droits administrateur
 # Claude Code (à lancer avec Claude Code fermé)
 #   conv-list         : conversations, puis reprise ou mise à la Corbeille
 #   conv --all        : toutes les conversations à la Corbeille
@@ -105,6 +105,90 @@ check_numbers() {
 # Protège un texte pour l'afficher dans une commande à copier-coller (rien n'y est exécuté par erreur)
 shq() {
     printf '%q' "$1"
+}
+
+# --- droits administrateur ---------------------------------------------------
+# Les actions qui demandent des droits passent par la fenêtre du système (mot de passe ou Touch ID).
+# Seules les commandes ci-dessous sont acceptées, avec des arguments contrôlés ; rien d'autre n'est élevé.
+ADMIN_QUEUE=()
+
+# 0 si la commande ($1 et suivants) fait partie de la liste autorisée
+admin_check() {
+    local c="$1"
+    shift
+    case "$c $*" in *"/../"*|*"/..") return 1 ;; esac
+    case "$c" in
+        mv)
+            [ $# -eq 2 ] || return 1
+            # Destination : la Corbeille, ou un nom direct dans la Corbeille
+            case "$2" in "$HOME/.Trash/") ;; "$HOME/.Trash/"*/*) return 1 ;; "$HOME/.Trash/"?*) ;; *) return 1 ;; esac
+            case "$1" in /Library/?*|/Applications/?*) ;; *) return 1 ;; esac
+            is_excluded "$1" && return 1
+            return 0 ;;
+        launchctl) [ $# -eq 2 ] && [ "$1" = "bootout" ] && case "$2" in system/?*|gui/?*) true ;; *) false ;; esac ;;
+        pkgutil) [ $# -eq 2 ] && [ "$1" = "--forget" ] && [ -n "$2" ] ;;
+        systemextensionsctl)
+            [ $# -eq 3 ] && [ "$1" = "uninstall" ] && [[ "$2" =~ ^([A-Z0-9]{10}|-)$ ]] && [[ "$3" =~ ^[A-Za-z0-9.-]+$ ]] ;;
+        dscacheutil) [ "$*" = "-flushcache" ] ;;
+        killall) [ "$*" = "-HUP mDNSResponder" ] ;;
+        mdutil) [ $# -eq 2 ] && [ "$1" = "-E" ] && [ -d "$2" ] ;;
+        tmutil)
+            case "$1" in
+                addexclusion|removeexclusion) [ $# -eq 3 ] && [ "$2" = "-p" ] && [ -n "$3" ] ;;
+                deletelocalsnapshots) [ $# -eq 2 ] && [ "$2" = "/" ] ;;
+                delete) [ $# -eq 5 ] && [ "$2" = "-d" ] && [ "$4" = "-t" ] ;;
+                *) false ;;
+            esac ;;
+        find)
+            case "$1" in /Library/Caches|/Library/Logs|/private/var/log) true ;; *) false ;; esac ;;
+        *) return 1 ;;
+    esac
+}
+
+# Ajoute une commande ($1 et suivants) à la file des actions avec droits administrateur.
+# Avec --try en premier : un échec de cette commande n'arrête pas les suivantes.
+admin_queue() {
+    local a line="" try=0
+    [ "${1:-}" = "--try" ] && { try=1; shift; }
+    if ! admin_check "$@"; then
+        msg "Commande refusée : %s" "$*"
+        return 1
+    fi
+    for a in "$@"; do
+        line="$line${line:+ }$(shq "$a")"
+    done
+    [ "$try" -eq 1 ] && line="$line 2>/dev/null || true"
+    ADMIN_QUEUE+=("$line")
+}
+
+# Exécute la file en une seule demande de droits, puis la vide
+admin_flush() {
+    local all="" l out rc=0
+    [ ${#ADMIN_QUEUE[@]} -gt 0 ] || return 0
+    for l in "${ADMIN_QUEUE[@]}"; do
+        all="$all${all:+ && }$l"
+    done
+    ADMIN_QUEUE=()
+    if [ "$DRY_RUN" -eq 1 ]; then
+        msg "[simulation] droits administrateur : %s" "$all"
+        return 0
+    fi
+    all=${all//\\/\\\\}
+    all=${all//\"/\\\"}
+    msg "Demande des droits administrateur (mot de passe ou Touch ID)..."
+    if out=$(osascript -e "do shell script \"$all\" with administrator privileges" 2>&1); then
+        [ -n "$out" ] && printf '%s\n' "$out"
+        count=$((count + 1))
+    else
+        rc=1
+        msg "Droits administrateur refusés ou action échouée : %s" "$out"
+    fi
+    return "$rc"
+}
+
+# Exécute une commande ($1 et suivants) avec les droits administrateur
+admin_run() {
+    admin_queue "$@" && admin_flush
 }
 
 # Vérifie que la saisie ($1) est un seul numéro entre 1 et $2 ; le range dans NUM
@@ -375,8 +459,14 @@ trash_item() {
     fi
     if mv "$src" "$dest" 2>/dev/null; then
         count=$((count + 1))
-    else
+    elif [ "$(stat -f %u "$src" 2>/dev/null)" = 0 ] && case "$src" in /Applications/?*) true ;; *) false ;; esac; then
+        # App installée par un .pkg : elle appartient à root, seul un administrateur peut la déplacer
+        admin_run mv "$src" "$dest" || return 1
+    elif case "$src" in "$HOME"/*) true ;; *) false ;; esac; then
         msg "Refusé par macOS : %s (donne l'accès complet au disque à l'app ou au Terminal, dans Réglages Système > Confidentialité et sécurité)" "$src"
+        return 1
+    else
+        msg "Refusé par macOS : %s" "$src"
         return 1
     fi
 }
@@ -481,26 +571,26 @@ info_msg() {
     local m=""
     case "$1" in
         conv-list|conv|claude-cache|all) claude_notice ;;
-        maintenance) m="coche les opérations d'entretien voulues, puis exécute-les en une fois. Celles qui demandent sudo sont regroupées à la fin, à lancer toi-même." ;;
+        maintenance) m="coche les opérations d'entretien voulues, puis exécute-les en une fois. Celles qui demandent des droits administrateur sont regroupées à la fin, avec une seule demande de mot de passe ou d'empreinte." ;;
         zsh-history) m="vide l'historique des commandes du terminal (confidentialité), sans lien avec Claude Code. L'ancien historique va à la Corbeille." ;;
         orphans) m="cherche dans ~/Library les fichiers laissés par des apps supprimées. Rien n'est déplacé sans ton choix ; les éléments choisis vont à la Corbeille." ;;
         app-uninstall) m="met une app et ses fichiers liés (réglages, caches, données) à la Corbeille. Si l'app est ouverte, core-eraser propose de la fermer." ;;
         dev-clean) m="vide les caches des outils de développement avec leurs propres commandes. Ils se recréent au besoin ; rien ne va à la Corbeille." ;;
         brew-manage) m="liste ce que tu as installé avec Homebrew. Les désinstallations passent par Homebrew : définitives, mais réinstallables." ;;
-        plugins) m="liste les modules et extensions installés, et indique si leur app existe encore. Ceux de /Library demandent une commande sudo affichée." ;;
-        services) m="liste les services lancés au démarrage (hors Apple). Les retirer les arrête ; ceux de /Library demandent une commande sudo affichée." ;;
-        pkg-manage) m="liste les traces laissées par les installations .pkg. Effacer une trace demande sudo et ne supprime pas l'app." ;;
+        plugins) m="liste les modules et extensions installés, et indique si leur app existe encore. Ceux de /Library demandent les droits administrateur (mot de passe ou empreinte)." ;;
+        services) m="liste les services lancés au démarrage (hors Apple). Les retirer les arrête ; ceux de /Library demandent les droits administrateur (mot de passe ou empreinte)." ;;
+        pkg-manage) m="liste les traces laissées par les installations .pkg. Effacer une trace demande les droits administrateur et ne supprime pas l'app." ;;
         updates) m="compare les versions installées aux dernières disponibles. Les apps Sparkle sont interrogées sur internet ; seules les apps Homebrew se mettent à jour d'ici." ;;
         lipo-app) m="retire la partie Intel d'une app pour gagner de la place. Un avertissement détaillé s'affiche avant le choix." ;;
         sentinel) m="surveille la Corbeille et signale les fichiers laissés par une app que tu y jettes. Ne supprime rien." ;;
         tm-clean) m="au branchement du disque Time Machine, vide les caches des navigateurs fermés et les journaux (au plus une fois toutes les 20 h)." ;;
-        spotlight) m="montre l'état de l'index Spotlight de chaque disque ; le reconstruire demande une commande sudo affichée." ;;
+        spotlight) m="montre l'état de l'index Spotlight de chaque disque ; le reconstruire demande les droits administrateur (mot de passe ou empreinte)." ;;
         user-clean) m="vide des caches et journaux de ton dossier perso. Ils se recréent ; historique, mots de passe et marque-pages ne sont pas touchés." ;;
-        system-clean) m="montre la taille des caches et journaux système, et affiche les commandes sudo pour les vider. Rien n'est supprimé d'ici." ;;
-        network) m="diagnostic et tests du réseau. Seul le vidage du cache DNS demande sudo ; le test de débit utilise ta connexion." ;;
+        system-clean) m="montre la taille des caches et journaux système, et les vide après confirmation, avec les droits administrateur (mot de passe ou empreinte)." ;;
+        network) m="diagnostic et tests du réseau. Seul le vidage du cache DNS demande les droits administrateur ; le test de débit utilise ta connexion." ;;
         exclude) m="gère la liste des éléments que core-eraser ne signale et ne touche jamais." ;;
         lang) m="choisit la langue de core-eraser : anglais (par défaut) ou français." ;;
-        timemachine) m="état, exclusions et sauvegardes Time Machine. Rien n'est supprimé d'ici : les suppressions demandent une commande sudo affichée." ;;
+        timemachine) m="état, exclusions et sauvegardes Time Machine. Les suppressions de sauvegardes demandent les droits administrateur (mot de passe ou empreinte)." ;;
     esac
     [ -n "$m" ] && msg "Info : %s" "$(t "$m")"
     [ "$DRY_RUN" -eq 1 ] && msg "Mode simulation : rien ne sera modifié."
@@ -969,6 +1059,7 @@ app_uninstall_run() {
         printf "  %9s  %s\n" "$(fmt_kb "$kb")" "$entry"
     done <<< "$PICKED"
     msg "  Total : %s" "$(fmt_kb "$total")"
+    sysext_warning "$app"
     token=$(cask_token "$app")
     [ -n "$token" ] && msg "Installée par Homebrew : lance aussi « brew uninstall --cask %s » ensuite." "$token"
     confirm
@@ -1217,9 +1308,43 @@ owner_of() {
     fi
 }
 
+# Nom lisible d'un type de module ($1 : extension du dossier, ex. systemextension) ; type inconnu gardé tel quel
+plugin_type_label() {
+    local l
+    case "$1" in
+        systemextension) l="extension système" ;;
+        kext) l="extension du noyau" ;;
+        bundle|plugin) l="module" ;;
+        workflow) l="processus Automator" ;;
+        prefPane) l="panneau de réglages" ;;
+        qlgenerator) l="aperçu Quick Look" ;;
+        mdimporter) l="importateur Spotlight" ;;
+        saver) l="économiseur d'écran" ;;
+        component) l="composant audio" ;;
+        appex) l="extension d'app" ;;
+        driver) l="pilote" ;;
+        xpc) l="service XPC" ;;
+        *) printf '%s' "$1"; return 0 ;;
+    esac
+    t "$l"
+}
+
+# État lisible d'une extension système ($1 : état donné par systemextensionsctl) ; état inconnu gardé tel quel
+sysext_state_label() {
+    local l
+    case "$1" in
+        "activated enabled") l="activée" ;;
+        "activated disabled") l="désactivée" ;;
+        "activated waiting for user") l="en attente de ton accord" ;;
+        "terminated waiting for uninstall on reboot"|"terminated waiting to uninstall on reboot") l="retirée au prochain redémarrage" ;;
+        *) printf '%s' "$1"; return 0 ;;
+    esac
+    t "$l"
+}
+
 # Une ligne par module (hors Apple) : taille en Ko, type, nom, app d'origine, chemin
 plugins_scan() {
-    local root b id low type owner kb exclude sysext
+    local root b id low type owner kb exclude sysext state
     TEAMS=$(installed_teams)
     # Modules = paquets avec Contents/Info.plist, hors apps, frameworks et dossiers de données
     exclude=$(printf '/%s/|' "${LIB_DIRS[@]}" Developer Frameworks)
@@ -1235,9 +1360,12 @@ plugins_scan() {
         type="${b##*.}"
         owner=$(owner_of "$id" "$b")
         # État des extensions système (ex : "activated enabled")
-        [ "$type" = "systemextension" ] && owner="$owner, $(printf '%s\n' "$sysext" | grep -F "$id" | sed -n 's/.*\[\(.*\)\]$/\1/p')"
+        if [ "$type" = "systemextension" ]; then
+            state=$(printf '%s\n' "$sysext" | grep -F "$id" | sed -n 's/.*\[\(.*\)\]$/\1/p' | head -1)
+            [ -n "$state" ] && owner="$owner, $(sysext_state_label "$state")"
+        fi
         kb=$(du -sk "$b" 2>/dev/null | cut -f1)
-        printf '%s\t%s\t%s\t%s\t%s\n' "${kb:-0}" "$type" "$(basename "$b")" "$owner" "$b"
+        printf '%s\t%s\t%s\t%s\t%s\n' "${kb:-0}" "$(plugin_type_label "$type")" "$(basename "$b")" "$owner" "$b"
     done
 }
 
@@ -1247,11 +1375,11 @@ plugins_run() {
     load_apps
     lines=$(plugins_scan | sort -rn)
     [ -n "$lines" ] || { msg "Aucun module trouvé."; return 0; }
-    hdr "%3s  %9s  %-16s  %-32s  %s\n" "N°" "Taille" "Type" "App d'origine" "Nom"
+    hdr "%3s  %9s  %-22s  %-32s  %s\n" "N°" "Taille" "Type" "App d'origine" "Nom"
     while IFS=$'\t' read -r kb type name owner path; do
         n=$((n + 1))
         paths+=("$path")
-        cprintf "%3d  %9s  %-16.16s  %-32.32s  %s\n" "$n" "$(fmt_kb "$kb")" "$type" "$owner" "$name"
+        cprintf "%3d  %9s  %-22.22s  %-32.32s  %s\n" "$n" "$(fmt_kb "$kb")" "$type" "$owner" "$name"
     done <<< "$lines"
     ask "Numéros à retirer (vide = rien) : "
     read -r sel
@@ -1268,15 +1396,45 @@ plugins_run() {
     done
 }
 
-# Retire un module ($1) : Corbeille dans le dossier perso, sinon indication de ce qu'il faut faire soi-même
+# Retire un module ($1) : Corbeille dans le dossier perso, sinon déplacement avec droits administrateur
 plugin_remove() {
     case "$1" in
         *.systemextension)
-            msg "Extension système, à retirer dans Réglages Système > Général > Ouverture et extensions : %s" "$(basename "$1")" ;;
+            sysext_remove "$1" ;;
         "$HOME"/*)
             trash_item "$1" ;;
         *)
-            msg "Droits administrateur requis, lance toi-même : sudo mv %s %s" "$(shq "$1")" "$(shq "$HOME/.Trash/")" ;;
+            admin_run mv "$1" "$HOME/.Trash/" ;;
+    esac
+}
+
+# Retire une extension système ($1 : son dossier) ; macOS ne l'accepte que si SIP est désactivée
+sysext_remove() {
+    local id team
+    if csrutil status 2>/dev/null | grep -q "enabled"; then
+        msg "Protégé par SIP : %s" "$(basename "$1" .systemextension)"
+        return 1
+    fi
+    id=$(plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null)
+    [ -n "$id" ] || { msg "Introuvable : %s" "$1"; return 1; }
+    team=$(team_of "$1")
+    admin_run systemextensionsctl uninstall "${team:--}" "$id"
+}
+
+# Avertit quand une app ($1) a des extensions système actives : macOS les garde après la suppression de l'app
+sysext_warning() {
+    local e id ids="" list
+    [ -d "$1/Contents/Library/SystemExtensions" ] || return 0
+    list=$(systemextensionsctl list 2>/dev/null | grep "\[activated")
+    for e in "$1"/Contents/Library/SystemExtensions/*.systemextension; do
+        [ -d "$e" ] || continue
+        id=$(plutil -extract CFBundleIdentifier raw -o - "$e/Contents/Info.plist" 2>/dev/null)
+        [ -n "$id" ] && grep -qF $'\t'"$id (" <<< "$list" && ids="$ids${ids:+, }$id"
+    done
+    [ -n "$ids" ] || return 0
+    msg "Cette app a des extensions système actives (%s). macOS les gardera après sa suppression : retire-les d'abord depuis l'app, puis redémarre." "$ids"
+    case "$(plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null)" in
+        ch.protonvpn.mac) msg "ProtonVPN : commande « Effacer les données de l'application »." ;;
     esac
 }
 
@@ -1348,7 +1506,7 @@ services_run() {
     done
 }
 
-# Arrête et retire un service ($1 fichier, $2 label) ; hors dossier perso, commandes sudo à lancer soi-même
+# Arrête et retire un service ($1 fichier, $2 label) ; hors dossier perso, avec droits administrateur
 service_remove() {
     local dom
     dom=$(launch_domain "$1")
@@ -1361,9 +1519,7 @@ service_remove() {
             fi
             trash_item "$1" ;;
         *)
-            msg "Droits administrateur requis, lance toi-même :"
-            msg "  sudo launchctl bootout %s" "$(shq "$dom/$2")"
-            msg "  sudo mv %s %s" "$(shq "$1")" "$(shq "$HOME/.Trash/")" ;;
+            admin_queue --try launchctl bootout "$dom/$2" && admin_queue mv "$1" "$HOME/.Trash/" && admin_flush ;;
     esac
 }
 
@@ -1410,16 +1566,16 @@ pkg_manage_run() {
     sel=${sel//,/ }
     [ -n "$sel" ] || { msg "Rien effacé."; return 0; }
     check_numbers "$sel" "$n"
-    msg "Droits administrateur requis, lance toi-même :"
+    confirm
     for num in $sel; do
         i=$((10#$num - 1))
-        pkg_forget_hint "${ids[$i]}" "${states[$i]}"
+        pkg_forget "${ids[$i]}" "${states[$i]}"
     done
 }
 
-# Commande pour effacer la trace d'un paquet ($1 identifiant, $2 état)
-pkg_forget_hint() {
-    msg "  sudo pkgutil --forget %s" "$(shq "$1")"
+# Efface la trace d'un paquet ($1 identifiant, $2 état), avec droits administrateur
+pkg_forget() {
+    admin_run pkgutil --forget "$1" || return 1
     case "$2" in
         trace*) ;;
         *) msg "    (n'efface que la trace : les fichiers restent, utilise app-uninstall pour l'app)" ;;
@@ -1751,17 +1907,10 @@ rotated_logs() {
     find /private/var/log -type f \( "${args[@]}" \) 2>/dev/null
 }
 
-# Prépare les 3 éléments de system-clean : SC_LABELS et SC_CMDS (commandes à lancer avec sudo)
-system_clean_cmds() {
-    local n expr=""
-    for n in $ROTATED_NAMES; do
-        expr="$expr${expr:+ -o }-name '$n'"
-    done
+# Prépare les 3 éléments de system-clean : SC_LABELS
+system_clean_labels() {
     SC_LABELS=("$(t "Caches système (/Library/Caches)")" "$(t "Rapports de plantage et journaux d'apps (/Library/Logs)")"
                "$(t "Journaux système archivés (/private/var/log, journaux en cours exclus)")")
-    SC_CMDS=("find /Library/Caches -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-             "find /Library/Logs -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-             "find /private/var/log -type f \\( $expr \\) -delete")
 }
 
 # Taille en Ko des 3 éléments de system-clean, une par ligne
@@ -1773,7 +1922,7 @@ system_clean_kb() {
 
 system_clean_run() {
     local sizes=() n sel num
-    system_clean_cmds
+    system_clean_labels
     while IFS= read -r n; do
         sizes+=("$(fmt_kb "$n")")
     done < <(system_clean_kb)
@@ -1787,10 +1936,27 @@ system_clean_run() {
     sel=${sel//,/ }
     [ -n "$sel" ] || { msg "Rien vidé."; return 0; }
     check_numbers "$sel" 3
-    msg "Droits administrateur requis, lance toi-même :"
+    confirm
     for num in $sel; do
-        msg "  sudo %s" "${SC_CMDS[$((10#$num - 1))]}"
+        system_clean_queue $((10#$num - 1))
     done
+    admin_flush
+}
+
+# Met en file la commande de l'élément ($1 : 0, 1 ou 2) de system-clean
+system_clean_queue() {
+    local n args=()
+    case "$1" in
+        0) admin_queue find /Library/Caches -mindepth 1 -maxdepth 1 -exec rm -rf '{}' + ;;
+        1) admin_queue find /Library/Logs -mindepth 1 -maxdepth 1 -exec rm -rf '{}' + ;;
+        2)
+            for n in $ROTATED_NAMES; do
+                [ ${#args[@]} -gt 0 ] && args+=(-o)
+                args+=(-name "$n")
+            done
+            admin_queue find /private/var/log -type f '(' "${args[@]}" ')' -delete ;;
+        *) return 1 ;;
+    esac
 }
 
 # --- réseau ----------------------------------------------------------------
@@ -1825,7 +1991,7 @@ network_resolve() {
 
 network_run() {
     local sel num labels=()
-    labels=("$(t "Vider le cache DNS (commande sudo affichée)")" "$(t "Diagnostic : DNS, proxy, /etc/hosts, extensions réseau")"
+    labels=("$(t "Vider le cache DNS (droits administrateur)")" "$(t "Diagnostic : DNS, proxy, /etc/hosts, extensions réseau")"
             "$(t "Test de résolution DNS d'un site")" "$(t "Test de débit (networkQuality, environ 20 s, utilise ta connexion)")")
     for num in 1 2 3 4; do
         printf "%3d  %s\n" "$num" "${labels[$((num - 1))]}"
@@ -1838,7 +2004,7 @@ network_run() {
     for num in $sel; do
         echo "--- ${labels[$((10#$num - 1))]}"
         case "$((10#$num))" in
-            1) network_flush_hint ;;
+            1) network_flush ;;
             2) network_diag ;;
             3) network_resolve ;;
             4) network_speed ;;
@@ -1846,9 +2012,9 @@ network_run() {
     done
 }
 
-network_flush_hint() {
-    msg "Droits administrateur requis, lance toi-même :"
-    msg "  sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"
+network_flush() {
+    admin_queue dscacheutil -flushcache && admin_queue killall -HUP mDNSResponder && admin_flush \
+        && msg "Cache DNS vidé."
 }
 
 network_speed() {
@@ -1922,23 +2088,23 @@ tm_exclusions_scan() {
     done | sort -rn
 }
 
-# Retire une exclusion ($1 type, $2 chemin) ; celles des réglages demandent sudo
+# Retire une exclusion ($1 type, $2 chemin) ; celles des réglages demandent les droits administrateur
 tm_exclusion_remove() {
     if [ "$1" = "attribut" ] && tmutil removeexclusion "$2" 2>/dev/null; then
         count=$((count + 1))
         msg "Sera de nouveau sauvegardé : %s" "$2"
     else
-        msg "Droits administrateur requis, lance toi-même : sudo tmutil removeexclusion -p %s" "$(shq "$2")"
+        admin_run tmutil removeexclusion -p "$2" && msg "Sera de nouveau sauvegardé : %s" "$2"
     fi
 }
 
-# Exclut un élément ($1) de Time Machine ; hors de ton dossier perso, sudo peut être requis
+# Exclut un élément ($1) de Time Machine ; hors de ton dossier perso, les droits administrateur peuvent être requis
 tm_exclusion_add() {
     if tmutil addexclusion "$1" 2>/dev/null; then
         count=$((count + 1))
         msg "Exclu : %s" "${1/#$HOME/~}"
     else
-        msg "Droits administrateur requis, lance toi-même : sudo tmutil addexclusion -p %s" "$(shq "$1")"
+        admin_run tmutil addexclusion -p "$1" && msg "Exclu : %s" "${1/#$HOME/~}"
     fi
 }
 
@@ -2037,15 +2203,17 @@ tm_unique_run() {
     read -r sel
     sel=${sel//,/ }
     [ -n "$sel" ] || { msg "Rien supprimé."; return 0; }
-    msg "Droits administrateur requis, lance toi-même :"
     if [ "$sel" = "l" ]; then
-        msg "  sudo tmutil deletelocalsnapshots /"
+        confirm
+        admin_run tmutil deletelocalsnapshots /
         return 0
     fi
     check_numbers "$sel" "$n"
+    confirm
     for num in $sel; do
-        msg "  sudo tmutil delete -d %s -t %s" "$(shq "$dest")" "$(shq "${dates[$((10#$num - 1))]}")"
+        admin_queue tmutil delete -d "$dest" -t "${dates[$((10#$num - 1))]}"
     done
+    admin_flush
 }
 
 # 8 : différences d'une sauvegarde avec la précédente
@@ -2096,7 +2264,7 @@ timemachine_run() {
             "$(t "Analyse : plus gros dossiers encore sauvegardés, puis exclusion au choix")"
             "$(t "Retirer une exclusion")"
             "$(t "Lancer une sauvegarde maintenant")"
-            "$(t "Supprimer d'anciennes sauvegardes ou les instantanés locaux (commande sudo affichée)")"
+            "$(t "Supprimer d'anciennes sauvegardes ou les instantanés locaux (droits administrateur)")"
             "$(t "Place propre de chaque sauvegarde (libérée si on la supprime)")"
             "$(t "Différences d'une sauvegarde avec la précédente")")
     for num in 1 2 3 4 5 6 7 8; do
@@ -2145,10 +2313,9 @@ spotlight_scan() {
     done < <(mdutil -s -a 2>/dev/null)
 }
 
-# Commande pour reconstruire l'index d'un disque ($1)
-spotlight_hint() {
-    msg "Droits administrateur requis, lance toi-même :"
-    msg "  sudo mdutil -E %s" "$(shq "$1")"
+# Reconstruit l'index d'un disque ($1), avec droits administrateur
+spotlight_rebuild() {
+    admin_run mdutil -E "$1" || return 1
     msg "La reconstruction se fait en arrière-plan (de quelques minutes à une heure) ; la recherche est incomplète pendant ce temps."
 }
 
@@ -2165,7 +2332,8 @@ spotlight_run() {
     read -r num
     [ -n "$num" ] || { msg "Rien fait."; return 0; }
     one_number "$num" "$n"
-    spotlight_hint "${vols[$((NUM - 1))]}"
+    confirm
+    spotlight_rebuild "${vols[$((NUM - 1))]}"
 }
 
 # --- surveillance de la Corbeille ------------------------------------------
@@ -2413,10 +2581,10 @@ cl_toggle_all() {
 # --- écran Maintenance -----------------------------------------------------
 
 maintenance_run() {
-    local i sudo_cmds=() vol
+    local i vol
     CL_LABELS=("$(t "Caches des navigateurs fermés")" "$(t "Caches utilisateur (apps ouvertes exclues)")" "$(t "Journaux utilisateur")"
-               "$(t "Caches de développement (npm, pip, Homebrew)")" "$(t "Cache DNS (sudo)")"
-               "$(t "Index Spotlight du disque de données (sudo)")" "$(t "Caches et journaux système (sudo)")"
+               "$(t "Caches de développement (npm, pip, Homebrew)")" "$(t "Cache DNS (droits administrateur)")"
+               "$(t "Index Spotlight du disque de données (droits administrateur)")" "$(t "Caches et journaux système (droits administrateur)")"
                "$(t "État de Time Machine")" "$(t "Sauvegarde Time Machine maintenant")")
     CL_DEFAULTS=(1 1 1 0 1 0 0 1 0)
     checklist || { msg "Annulé."; return 0; }
@@ -2433,37 +2601,36 @@ maintenance_run() {
         done
     fi
     [ "${CL_STATES[3]}" -eq 1 ] && dev_clean_all
-    [ "${CL_STATES[4]}" -eq 1 ] && sudo_cmds+=("dscacheutil -flushcache" "killall -HUP mDNSResponder")
+    if [ "${CL_STATES[4]}" -eq 1 ]; then
+        admin_queue dscacheutil -flushcache
+        admin_queue killall -HUP mDNSResponder
+    fi
     if [ "${CL_STATES[5]}" -eq 1 ]; then
         vol=$(df "$HOME" | awk 'NR == 2 { print $NF }')
-        sudo_cmds+=("mdutil -E $(shq "$vol")")
+        admin_queue mdutil -E "$vol"
     fi
     if [ "${CL_STATES[6]}" -eq 1 ]; then
-        system_clean_cmds
-        sudo_cmds+=("${SC_CMDS[@]}")
+        for i in 0 1 2; do
+            system_clean_queue "$i"
+        done
     fi
     [ "${CL_STATES[7]}" -eq 1 ] && tm_status
     if [ "${CL_STATES[8]}" -eq 1 ]; then
         if [ "$DRY_RUN" -eq 1 ]; then msg "[simulation] sauvegarde Time Machine"
         else tmutil startbackup && msg "Sauvegarde Time Machine lancée."; fi
     fi
-    if [ ${#sudo_cmds[@]} -gt 0 ]; then
-        msg "Droits administrateur requis : copie ces lignes dans le Terminal (mot de passe demandé une fois) :"
-        for i in "${sudo_cmds[@]}"; do
-            msg "  sudo %s" "$i"
-        done
-    fi
+    admin_flush
 }
 
 # --- mode api : piloté par l'app, sans aucune question ----------------------
 # Sorties en colonnes séparées par des tabulations. Code de retour 2 : demande inconnue.
 #   api list orphans|plugins|services|pkgs|updates|brew|apps|dev-caches|npx-tools|user-clean|system-clean|excludes|tm-backups
 #   api list app-files <app>         api list user-clean-items <0|1|2>   api clear <cache ou journal>...
-#   api text tm-status|network-diag|dns-test [site]|dns-flush|speed-test     api tm-backup
+#   api text tm-status|network-diag|dns-test [site]|dns-flush|speed-test|sysext-warning <app>     api tm-backup
 #   api service-remove <fichier>...  api pkg-forget <paquet>...   api brew-upgrade <app>...   api brew-uninstall <nom>...
 #   api brew-autoremove              api sentinel on|off|status   api tm-clean on|off|status
 #   api list convs|lipo-apps|spotlight|tm-exclusions|tm-analysis   api text claude-notice|zsh-info|lipo-warning|tm-compare
-#   api conv-trash <id>...  api claude-cache  api zsh-history  api lipo-app <app>...  api spotlight-rebuild <disque>...
+#   api conv-trash <id>...  api claude-cache  api zsh-history  api lipo-app <app>...  api spotlight-rebuild <disque>...  api system-clean-run <0|1|2>...
 #   api tm-exclude-add <chemin>...   api tm-exclude-remove <chemin>...
 #   api trash <chemin>...            api exclude-add <chemin>     api exclude-remove <chemin>   api plugin-remove <chemin>...
 #   api user-clean <0|1|2>...        api dev-clean <nom>...       api npx-remove <dossier>...   api version | lang
@@ -2529,10 +2696,10 @@ api_list() {
                 [ -n "$p" ] && printf '%s\t%s\n' "$(du -sk "$p" 2>/dev/null | cut -f1)" "$p"
             done | sort -rn ;;
         system-clean)
-            system_clean_cmds
+            system_clean_labels
             i=0
             while IFS= read -r kb; do
-                printf '%s\t%s\t%s\tsudo %s\n' "$i" "${kb:-0}" "${SC_LABELS[$i]}" "${SC_CMDS[$i]}"
+                printf '%s\t%s\t%s\n' "$i" "${kb:-0}" "${SC_LABELS[$i]}"
                 i=$((i + 1))
             done < <(system_clean_kb) ;;
         excludes) exclude_entries ;;
@@ -2551,7 +2718,8 @@ api_run() {
                 tm-status) tm_status ;;
                 network-diag) network_diag ;;
                 dns-test) network_resolve "${2:-apple.com}" ;;
-                dns-flush) network_flush_hint ;;
+                dns-flush) network_flush ;;
+                sysext-warning) [ -d "${2:-}" ] || return 2; sysext_warning "$2" ;;
                 speed-test) network_speed ;;
                 claude-notice) claude_notice; warn_running ;;
                 zsh-info) zsh_info ;;
@@ -2617,10 +2785,9 @@ api_run() {
             return "$rc" ;;
         pkg-forget)
             known=$(pkg_scan)
-            msg "Droits administrateur requis, lance toi-même :"
             for p in "$@"; do
                 state=$(awk -F'\t' -v p="$p" '$1 == p { print $5 }' <<< "$known")
-                if [ -n "$state" ]; then pkg_forget_hint "$p" "$state"; else rc=2; fi
+                if [ -n "$state" ]; then pkg_forget "$p" "$state" || rc=1; else rc=2; fi
             done
             return "$rc" ;;
         brew-upgrade)
@@ -2664,10 +2831,16 @@ api_run() {
                 if offer_quit "$p"; then lipo_strip "$p" || rc=1; else msg "%s est ouverte : rien fait." "$(basename "$p" .app)"; rc=1; fi
             done
             return "$rc" ;;
+        system-clean-run)
+            for p in "$@"; do
+                case "$p" in 0|1|2) system_clean_queue "$p" || rc=1 ;; *) rc=2 ;; esac
+            done
+            admin_flush || rc=1
+            return "$rc" ;;
         spotlight-rebuild)
             known=$(spotlight_scan | cut -f1)
             for p in "$@"; do
-                if grep -qxF "$p" <<< "$known"; then spotlight_hint "$p"; else rc=2; fi
+                if grep -qxF "$p" <<< "$known"; then spotlight_rebuild "$p" || rc=1; else rc=2; fi
             done
             return "$rc" ;;
         tm-exclude-add)
@@ -2864,12 +3037,12 @@ Applications	Applications
 Nettoyage	Cleanup
   user-clean        : caches des navigateurs, caches et journaux de ton dossier perso	  user-clean        : browser caches, caches and logs in your home folder
   dev-clean         : caches des outils de développement installés (npm, pip, Homebrew, Xcode), outils npx	  dev-clean         : caches of installed developer tools (npm, pip, Homebrew, Xcode), npx tools
-  system-clean      : caches et journaux système (tailles), commandes sudo pour les vider	  system-clean      : system caches and logs (sizes), sudo commands to empty them
+  system-clean      : caches et journaux système (tailles), vidage avec droits administrateur	  system-clean      : system caches and logs (sizes), emptied with administrator rights
 Stockage et sauvegarde	Storage and backup
   timemachine       : état, exclusions, analyse, sauvegarde, place de chaque sauvegarde, différences	  timemachine       : status, exclusions, analysis, backup, size of each backup, differences
-  spotlight         : état de l'index Spotlight, commande sudo pour le reconstruire	  spotlight         : Spotlight index status, sudo command to rebuild it
+  spotlight         : état de l'index Spotlight, reconstruction avec droits administrateur	  spotlight         : Spotlight index status, rebuilt with administrator rights
 Réseau	Network
-  network           : diagnostic, test DNS, test de débit, commande sudo pour vider le cache DNS	  network           : diagnostics, DNS test, speed test, sudo command to flush the DNS cache
+  network           : diagnostic, test DNS, test de débit, vidage du cache DNS avec droits administrateur	  network           : diagnostics, DNS test, speed test, DNS cache flush with administrator rights
 Claude Code (à lancer avec Claude Code fermé)	Claude Code (run with Claude Code closed)
   conv-list         : conversations, puis reprise ou mise à la Corbeille	  conv-list         : conversations, then resume or move to the Trash
   conv --all        : toutes les conversations à la Corbeille	  conv --all        : all conversations to the Trash
@@ -2907,7 +3080,6 @@ Langue	Language
 Clique sur Analyser pour chercher les restes.	Click Scan to look for leftovers.
 Mettre la sélection à la Corbeille ?	Move the selection to the Trash?
 Exécuter les opérations cochées ?	Run the checked tasks?
-Commandes à lancer toi-même dans Terminal (droits administrateur) :	Commands to run yourself in Terminal (administrator rights):
 L'accès complet au disque manque : la Corbeille et les conteneurs d'apps ne peuvent pas être analysés.	Full Disk Access is missing: the Trash and app containers cannot be scanned.
 Ouvrir les réglages	Open Settings
   %s : en cours d'utilisation, gardé	  %s: in use, kept
@@ -3057,8 +3229,6 @@ Aucun module trouvé.	No modules found.
 App d'origine	Parent app
 Numéros à retirer (vide = rien) : 	Numbers to remove (empty = nothing): 
 Seront retirés :	Will be removed:
-Extension système, à retirer dans Réglages Système > Général > Ouverture et extensions : %s	System extension, remove it in System Settings > General > Login Items & Extensions: %s
-Droits administrateur requis, lance toi-même : sudo mv %s %s	Administrator rights required, run it yourself: sudo mv %s %s
 fichier invalide (ignoré)	invalid file (ignored)
 programme présent	program present
 programme manquant	program missing
@@ -3066,7 +3236,6 @@ Aucun service tiers.	No third-party services.
 Programme	Program
 Seront arrêtés et retirés :	Will be stopped and removed:
 [simulation] arrêt de %s	[simulation] stopping %s
-Droits administrateur requis, lance toi-même :	Administrator rights required, run it yourself:
 Aucun paquet tiers.	No third-party packages.
 Paquet	Package
 Installé	Installed
@@ -3121,7 +3290,7 @@ dig absent.	dig is missing.
 Site à tester (vide = apple.com) : 	Site to test (empty = apple.com): 
 Temps de réponse : 	Response time: 
 Serveur DNS : 	DNS server: 
-Vider le cache DNS (commande sudo affichée)	Flush the DNS cache (sudo command shown)
+Vider le cache DNS (droits administrateur)	Flush the DNS cache (administrator rights)
 Diagnostic : DNS, proxy, /etc/hosts, extensions réseau	Diagnostics: DNS, proxy, /etc/hosts, network extensions
 Test de résolution DNS d'un site	DNS resolution test for a site
 Test de débit (networkQuality, environ 20 s, utilise ta connexion)	Speed test (networkQuality, about 20 s, uses your connection)
@@ -3143,12 +3312,35 @@ Aucune sauvegarde en cours	No backup in progress
 Numéros dont retirer l'exclusion (vide = rien) : 	Numbers whose exclusion to remove (empty = nothing): 
 Rien changé.	Nothing changed.
 Sera de nouveau sauvegardé : %s	Will be backed up again: %s
-Droits administrateur requis, lance toi-même : sudo tmutil removeexclusion -p %s	Administrator rights required, run it yourself: sudo tmutil removeexclusion -p %s
+Commande refusée : %s	Command refused: %s
+[simulation] droits administrateur : %s	[simulation] administrator rights: %s
+Demande des droits administrateur (mot de passe ou Touch ID)...	Requesting administrator rights (password or Touch ID)...
+Droits administrateur refusés ou action échouée : %s	Administrator rights denied or action failed: %s
+Cache DNS vidé.	DNS cache flushed.
+Refusé par macOS : %s	Refused by macOS: %s
+extension système	system extension
+extension du noyau	kernel extension
+module	plug-in
+processus Automator	Automator workflow
+panneau de réglages	settings pane
+aperçu Quick Look	Quick Look preview
+importateur Spotlight	Spotlight importer
+économiseur d'écran	screen saver
+composant audio	audio component
+extension d'app	app extension
+pilote	driver
+Protégé par SIP : %s	Protected by SIP: %s
+Cette app a des extensions système actives (%s). macOS les gardera après sa suppression : retire-les d'abord depuis l'app, puis redémarre.	This app has active system extensions (%s). macOS will keep them after it is deleted: remove them from the app first, then restart.
+ProtonVPN : commande « Effacer les données de l'application ».	ProtonVPN: “Clear Application Data” command.
+service XPC	XPC service
+activée	enabled
+désactivée	disabled
+en attente de ton accord	waiting for your approval
+retirée au prochain redémarrage	removed at next restart
 Analyse en cours (une à quelques minutes)...	Analyzing (one to a few minutes)...
 Dossier encore sauvegardé	Folder still backed up
 Numéros à exclure de Time Machine (vide = rien) : 	Numbers to exclude from Time Machine (empty = nothing): 
 Exclu : %s	Excluded: %s
-Droits administrateur requis, lance toi-même : sudo tmutil addexclusion -p %s	Administrator rights required, run it yourself: sudo tmutil addexclusion -p %s
 Disque Time Machine débranché.	Time Machine disk disconnected.
 Mesure de chaque sauvegarde...	Measuring each backup...
 Sauvegarde	Backup
@@ -3170,7 +3362,7 @@ Liste des exclusions	Exclusion list
 Analyse : plus gros dossiers encore sauvegardés, puis exclusion au choix	Analysis: largest folders still backed up, then optional exclusion
 Retirer une exclusion	Remove an exclusion
 Lancer une sauvegarde maintenant	Start a backup now
-Supprimer d'anciennes sauvegardes ou les instantanés locaux (commande sudo affichée)	Delete old backups or local snapshots (sudo command shown)
+Supprimer d'anciennes sauvegardes ou les instantanés locaux (droits administrateur)	Delete old backups or local snapshots (administrator rights)
 Place propre de chaque sauvegarde (libérée si on la supprime)	Own size of each backup (freed if deleted)
 Différences d'une sauvegarde avec la précédente	Differences between a backup and the previous one
 Numéro (vide = rien) : 	Number (empty = nothing): 
@@ -3192,15 +3384,14 @@ Flèches : se déplacer   Espace : cocher   a : tout   d : par défaut   Entrée
 Numéros à cocher/décocher, a = tout, d = par défaut, e = valider, q = quitter : 	Numbers to check/uncheck, a = all, d = defaults, e = confirm, q = quit: 
 Caches utilisateur (apps ouvertes exclues)	User caches (open apps excluded)
 Caches de développement (npm, pip, Homebrew)	Developer caches (npm, pip, Homebrew)
-Cache DNS (sudo)	DNS cache (sudo)
-Index Spotlight du disque de données (sudo)	Spotlight index of the data disk (sudo)
-Caches et journaux système (sudo)	System caches and logs (sudo)
+Cache DNS (droits administrateur)	DNS cache (administrator rights)
+Index Spotlight du disque de données (droits administrateur)	Spotlight index of the data disk (administrator rights)
+Caches et journaux système (droits administrateur)	System caches and logs (administrator rights)
 État de Time Machine	Time Machine status
 Sauvegarde Time Machine maintenant	Time Machine backup now
 Seront exécutés :	Will be run:
 [simulation] sauvegarde Time Machine	[simulation] Time Machine backup
 Sauvegarde Time Machine lancée.	Time Machine backup started.
-Droits administrateur requis : copie ces lignes dans le Terminal (mot de passe demandé une fois) :	Administrator rights required: paste these lines into Terminal (password asked once):
 core-eraser : choisis une catégorie	core-eraser: choose a category
 Au revoir.	Goodbye.
 Quitter	Quit
@@ -3235,25 +3426,25 @@ Vider l'historique du terminal	Clear the terminal history
 Surveillance de la Corbeille : activer	Trash monitoring: turn on
 Surveillance de la Corbeille : désactiver	Trash monitoring: turn off
 Langue : English / Français	Language: English / Français
-coche les opérations d'entretien voulues, puis exécute-les en une fois. Celles qui demandent sudo sont regroupées à la fin, à lancer toi-même.	check the maintenance tasks you want, then run them all at once. Those needing sudo are grouped at the end, for you to run.
+coche les opérations d'entretien voulues, puis exécute-les en une fois. Celles qui demandent des droits administrateur sont regroupées à la fin, avec une seule demande de mot de passe ou d'empreinte.	check the maintenance tasks you want, then run them all at once. Those needing administrator rights are grouped at the end, with a single password or fingerprint prompt.
 vide l'historique des commandes du terminal (confidentialité), sans lien avec Claude Code. L'ancien historique va à la Corbeille.	clears the terminal command history (privacy), unrelated to Claude Code. The old history goes to the Trash.
 cherche dans ~/Library les fichiers laissés par des apps supprimées. Rien n'est déplacé sans ton choix ; les éléments choisis vont à la Corbeille.	looks in ~/Library for files left by deleted apps. Nothing is moved without your choice; chosen items go to the Trash.
 met une app et ses fichiers liés (réglages, caches, données) à la Corbeille. Si l'app est ouverte, core-eraser propose de la fermer.	moves an app and its related files (settings, caches, data) to the Trash. If the app is open, core-eraser offers to quit it.
 vide les caches des outils de développement avec leurs propres commandes. Ils se recréent au besoin ; rien ne va à la Corbeille.	empties developer tool caches with their own commands. They are recreated when needed; nothing goes to the Trash.
 liste ce que tu as installé avec Homebrew. Les désinstallations passent par Homebrew : définitives, mais réinstallables.	lists what you installed with Homebrew. Uninstalls go through Homebrew: permanent, but reinstallable.
-liste les modules et extensions installés, et indique si leur app existe encore. Ceux de /Library demandent une commande sudo affichée.	lists installed modules and extensions, and whether their app still exists. Those in /Library need a sudo command, which is shown.
-liste les services lancés au démarrage (hors Apple). Les retirer les arrête ; ceux de /Library demandent une commande sudo affichée.	lists startup services (non-Apple). Removing them stops them; those in /Library need a sudo command, which is shown.
-liste les traces laissées par les installations .pkg. Effacer une trace demande sudo et ne supprime pas l'app.	lists the receipts left by .pkg installs. Forgetting a receipt needs sudo and does not delete the app.
+liste les modules et extensions installés, et indique si leur app existe encore. Ceux de /Library demandent les droits administrateur (mot de passe ou empreinte).	lists installed modules and extensions, and whether their app still exists. Those in /Library need administrator rights (password or fingerprint).
+liste les services lancés au démarrage (hors Apple). Les retirer les arrête ; ceux de /Library demandent les droits administrateur (mot de passe ou empreinte).	lists startup services (non-Apple). Removing them stops them; those in /Library need administrator rights (password or fingerprint).
+liste les traces laissées par les installations .pkg. Effacer une trace demande les droits administrateur et ne supprime pas l'app.	lists the receipts left by .pkg installs. Forgetting a receipt needs administrator rights and does not delete the app.
 compare les versions installées aux dernières disponibles. Les apps Sparkle sont interrogées sur internet ; seules les apps Homebrew se mettent à jour d'ici.	compares installed versions with the latest available. Sparkle apps are checked over the internet; only Homebrew apps update from here.
 retire la partie Intel d'une app pour gagner de la place. Un avertissement détaillé s'affiche avant le choix.	strips the Intel part of an app to save space. A detailed warning is shown before you choose.
 surveille la Corbeille et signale les fichiers laissés par une app que tu y jettes. Ne supprime rien.	watches the Trash and reports files left by an app you throw into it. Deletes nothing.
-montre l'état de l'index Spotlight de chaque disque ; le reconstruire demande une commande sudo affichée.	shows the Spotlight index state of each disk; rebuilding it needs a sudo command, which is shown.
+montre l'état de l'index Spotlight de chaque disque ; le reconstruire demande les droits administrateur (mot de passe ou empreinte).	shows the Spotlight index state of each disk; rebuilding it needs administrator rights (password or fingerprint).
 vide des caches et journaux de ton dossier perso. Ils se recréent ; historique, mots de passe et marque-pages ne sont pas touchés.	empties caches and logs in your home folder. They are recreated; history, passwords and bookmarks are not touched.
-montre la taille des caches et journaux système, et affiche les commandes sudo pour les vider. Rien n'est supprimé d'ici.	shows the size of system caches and logs, and the sudo commands to empty them. Nothing is deleted from here.
-diagnostic et tests du réseau. Seul le vidage du cache DNS demande sudo ; le test de débit utilise ta connexion.	network diagnostics and tests. Only flushing the DNS cache needs sudo; the speed test uses your connection.
+montre la taille des caches et journaux système, et les vide après confirmation, avec les droits administrateur (mot de passe ou empreinte).	shows the size of system caches and logs, and empties them after confirmation, with administrator rights (password or fingerprint).
+diagnostic et tests du réseau. Seul le vidage du cache DNS demande les droits administrateur ; le test de débit utilise ta connexion.	network diagnostics and tests. Only flushing the DNS cache needs administrator rights; the speed test uses your connection.
 gère la liste des éléments que core-eraser ne signale et ne touche jamais.	manages the list of items core-eraser never reports or touches.
 choisit la langue de core-eraser : anglais (par défaut) ou français.	chooses the core-eraser language: English (default) or French.
-état, exclusions et sauvegardes Time Machine. Rien n'est supprimé d'ici : les suppressions demandent une commande sudo affichée.	Time Machine status, exclusions and backups. Nothing is deleted from here: deletions need a sudo command, which is shown.
+état, exclusions et sauvegardes Time Machine. Les suppressions de sauvegardes demandent les droits administrateur (mot de passe ou empreinte).	Time Machine status, exclusions and backups. Deleting backups needs administrator rights (password or fingerprint).
 paquet	package
 réglages	settings
 attribut	attribute

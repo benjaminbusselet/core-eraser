@@ -1,11 +1,11 @@
-// Maintenance : interrupteurs par catégorie, détail à cocher par élément, et commandes sudo à copier.
+// Maintenance : interrupteurs par catégorie, détail à cocher par élément ; le système demande les droits administrateur.
 import SwiftUI
 import AppKit
 
 struct MaintenanceTask: Identifiable {
-    enum Kind { case user, dev, npx }
+    enum Kind { case user, dev, npx, system }
     let kind: Kind
-    let key: String      // indice (user-clean), nom de l'outil (dev-clean) ou dossier (outil npx)
+    let key: String      // indice (user-clean, system-clean), nom de l'outil (dev-clean) ou dossier (outil npx)
     let label: String
     let kb: Int
     var isOn: Bool
@@ -15,17 +15,9 @@ struct MaintenanceTask: Identifiable {
     var id: String { "\(kind)-\(key)" }
 }
 
-struct SudoCommand: Identifiable {
-    let label: String
-    let kb: Int
-    let command: String
-    var id: String { command }
-}
-
 struct MaintenanceView: View {
     @EnvironmentObject private var state: AppState
     @State private var tasks: [MaintenanceTask] = []
-    @State private var sudoCommands: [SudoCommand] = []
     @State private var loading = false
     @State private var output = ""
     @State private var confirmRun = false
@@ -55,22 +47,6 @@ struct MaintenanceView: View {
                             }
                             .onChange(of: task.expanded) { open in
                                 if open && task.items == nil { Task { await loadItems(task.id) } }
-                            }
-                        }
-                    }
-                }
-                Section(state.t("Commandes à lancer toi-même dans Terminal (droits administrateur) :")) {
-                    ForEach(sudoCommands) { item in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("\(item.label)  ·  \(formatKB(item.kb))")
-                                Text(item.command).font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary).textSelection(.enabled)
-                            }
-                            Spacer()
-                            Button(state.t("Copier")) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(item.command, forType: .string)
                             }
                         }
                     }
@@ -121,8 +97,9 @@ struct MaintenanceView: View {
         async let dev = Script.run(["list", "dev-caches"], lang: lang)
         async let npx = Script.run(["list", "npx-tools"], lang: lang)
         // Chaque partie s'affiche dès qu'elle est prête, la plus rapide d'abord
-        sudoCommands = (await Script.run(["list", "system-clean"], lang: lang)).rows.compactMap { row in
-            row.count == 4 ? SudoCommand(label: row[2], kb: Int(row[1]) ?? 0, command: row[3]) : nil
+        // Le système demande les droits administrateur (mot de passe ou empreinte) au moment d'exécuter
+        let systemTasks = (await Script.run(["list", "system-clean"], lang: lang)).rows.filter { $0.count == 3 }.map { row in
+            MaintenanceTask(kind: .system, key: row[0], label: row[2], kb: Int(row[1]) ?? 0, isOn: false)
         }
         let devTasks = (await dev).rows.filter { $0.count == 3 }.map { row in
             MaintenanceTask(kind: .dev, key: row[1], label: row[1], kb: Int(row[0]) ?? 0, isOn: false)
@@ -136,7 +113,7 @@ struct MaintenanceView: View {
             MaintenanceTask(kind: .npx, key: row[4], label: "npx · \(row[1]) · \(row[2])",
                             kb: Int(row[0]) ?? 0, isOn: false, busy: row[3] == "1")
         }
-        tasks = userTasks + devTasks + npxTasks
+        tasks = userTasks + devTasks + npxTasks + systemTasks
         loading = false
     }
 
@@ -163,6 +140,10 @@ struct MaintenanceView: View {
         let npx = tasks.filter { $0.isOn && $0.kind == .npx && !$0.busy }.map(\.key)
         if !npx.isEmpty {
             lines.append((await Script.run(["npx-remove"] + npx, dryRun: dryRun, lang: lang)).output)
+        }
+        let system = tasks.filter { $0.isOn && $0.kind == .system }.map(\.key)
+        if !system.isEmpty {
+            lines.append((await Script.run(["system-clean-run"] + system, dryRun: dryRun, lang: lang)).output)
         }
         await reload()
         let text = lines.joined().trimmingCharacters(in: .whitespacesAndNewlines)
