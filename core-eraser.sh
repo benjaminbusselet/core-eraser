@@ -39,7 +39,7 @@
 
 set -u
 
-VERSION="0.4.1"
+VERSION="0.5.0"
 APP_ID="io.github.benjaminbusselet.core-eraser"
 
 # Sans langue système définie (app, service en arrière-plan), les textes accentués seraient mal comparés
