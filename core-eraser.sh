@@ -2721,7 +2721,7 @@ api_run() {
 
 # Catégories du menu principal ; chaque sous-menu liste "commande|libellé"
 MENU_CATS=("Maintenance (cases à cocher)" "Applications" "Nettoyage" "Stockage et sauvegarde" "Réseau"
-           "Claude Code" "Confidentialité" "Réglages de core-eraser")
+           "Claude Code" "Confidentialité" "Réglages de core-eraser" "Quitter")
 MENU_1=("app-uninstall|Désinstaller une app et ses fichiers" "orphans|Restes d'apps supprimées"
         "updates|Mises à jour des apps" "brew-manage|Paquets et apps Homebrew" "plugins|Plug-ins et extensions"
         "services|Services au démarrage" "pkg-manage|Traces d'installations .pkg" "lipo-app|Retirer la partie Intel d'une app")
@@ -2744,27 +2744,39 @@ menu() {
             MS_LABELS+=("$(t "$entry")")
         done
         msg "core-eraser : choisis une catégorie"
-        menu_select || { msg "Au revoir."; exit 0; }
-        case "$MS_CHOICE" in
-            0) run maintenance; return ;;
-            1) items=("${MENU_1[@]}") ;;
-            2) items=("${MENU_2[@]}") ;;
-            3) items=("${MENU_3[@]}") ;;
-            4) items=("${MENU_4[@]}") ;;
-            5) items=("${MENU_5[@]}") ;;
-            6) items=("${MENU_6[@]}") ;;
-            7) items=("${MENU_7[@]}") ;;
-        esac
-        MS_LABELS=()
-        for entry in "${items[@]}"; do
-            MS_LABELS+=("$(t "${entry#*|}")")
-        done
-        msg "%s :" "$(t "${MENU_CATS[$MS_CHOICE]}")"
-        menu_select || continue
-        entry="${items[$MS_CHOICE]}"
-        read -r -a words <<< "${entry%%|*}"
-        run "${words[@]}"
-        return
+        # « Quitter » (dernière ligne), q ou Échap : fin du script
+        if ! menu_select || [ "$MS_CHOICE" -eq $((${#MENU_CATS[@]} - 1)) ]; then
+            msg "Au revoir."
+            exit 0
+        fi
+        if [ "$MS_CHOICE" -eq 0 ]; then
+            words=(maintenance)
+        else
+            case "$MS_CHOICE" in
+                1) items=("${MENU_1[@]}") ;;
+                2) items=("${MENU_2[@]}") ;;
+                3) items=("${MENU_3[@]}") ;;
+                4) items=("${MENU_4[@]}") ;;
+                5) items=("${MENU_5[@]}") ;;
+                6) items=("${MENU_6[@]}") ;;
+                7) items=("${MENU_7[@]}") ;;
+            esac
+            MS_LABELS=()
+            for entry in "${items[@]}"; do
+                MS_LABELS+=("$(t "${entry#*|}")")
+            done
+            msg "%s :" "$(t "${MENU_CATS[$MS_CHOICE]}")"
+            menu_select || continue
+            entry="${items[$MS_CHOICE]}"
+            read -r -a words <<< "${entry%%|*}"
+        fi
+        # Sous-shell : une tâche qui s'arrête (annulation, erreur) ramène au menu au lieu de fermer le script
+        ( run "${words[@]}" )
+        # La tâche « lang » a pu changer la langue
+        case "$(cat "$TOOLS_DATA/lang" 2>/dev/null)" in fr) TOOLS_LANG=fr ;; en) TOOLS_LANG=en ;; esac
+        echo
+        ask "Entrée : retour au menu "
+        read -r _ || exit 0
     done
 }
 
@@ -3191,6 +3203,8 @@ Sauvegarde Time Machine lancée.	Time Machine backup started.
 Droits administrateur requis : copie ces lignes dans le Terminal (mot de passe demandé une fois) :	Administrator rights required: paste these lines into Terminal (password asked once):
 core-eraser : choisis une catégorie	core-eraser: choose a category
 Au revoir.	Goodbye.
+Quitter	Quit
+Entrée : retour au menu 	Enter: back to the menu 
 %s :	%s:
 Terminé.	Done.
 Terminé (1 élément traité).	Done (1 item processed).

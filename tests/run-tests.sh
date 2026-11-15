@@ -209,6 +209,9 @@ check "conv-trash sur un id invalide : refusé" test "$rc" -ne 0
 printf 'ls\n' > "$T/.zsh_history"
 api zsh-history >/dev/null
 check "zsh-history : historique remplacé par un fichier vide" test -f "$T/.zsh_history" -a ! -s "$T/.zsh_history"
+# Menu : une tâche interrompue (numéro invalide) ramène au menu ; « Quitter » ferme le script
+out=$(printf '5\n1\n7\n\n9\n' | HOME="$T" TOOLS_LANG=en "$SCRIPT" 2>&1)
+check "menu : retour au menu après une tâche, puis Quitter" test "$(grep -c 'choose a category' <<< "$out")" -eq 2 -a -n "$(grep Goodbye <<< "$out")"
 api list inconnu >/dev/null; rc=$?
 check "demande inconnue : code 2" test "$rc" -eq 2
 check "version" test "$(api version)" = "$(run --version | awk '{ print $2 }')"
