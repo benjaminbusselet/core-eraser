@@ -509,7 +509,7 @@ conv_list() {
 
 # Liste numérotée, puis une saisie : "r N" (resume) ou "d N N N" (delete)
 conv_menu() {
-    local line action nums num cid dir selected=()
+    local line action nums num cid dir project selected=()
     conv_list
     [ ${#CONV_IDS[@]} -gt 0 ] || return 0
     ask "r N = resume, d N N = delete (vide = annuler) : "
@@ -528,7 +528,11 @@ conv_menu() {
             [ $# -eq 1 ] || { msg "resume : un seul numéro."; exit 1; }
             num=$((10#$1))
             cid="${CONV_IDS[$((num - 1))]}"
-            dir=$(jq -r 'select(.cwd) | .cwd' "${CONV_FILES[$((num - 1))]}" 2>/dev/null | head -1)
+            # Dossier de la session : celui dont le nom encodé est le dossier de projet
+            # (après un /cd, la conversation est rangée sous le nouveau dossier)
+            project=$(basename "$(dirname "${CONV_FILES[$((num - 1))]}")")
+            dir=$(jq -r 'select(.cwd) | .cwd' "${CONV_FILES[$((num - 1))]}" 2>/dev/null \
+                | awk -v p="$project" '{ e = $0; gsub(/[^A-Za-z0-9]/, "-", e) } e == p { print; exit }')
             [ -d "$dir" ] || { msg "Dossier d'origine introuvable : %s" "$dir"; exit 1; }
             cd "$dir" && exec claude --resume "$cid"
             ;;
